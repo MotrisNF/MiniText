@@ -1231,6 +1231,7 @@ class TextEditor:
         if self.run_pending_text:
             self.run_output_lines.append(self.run_pending_text)
             self.run_pending_text = ""
+        self.run_output_lines.append("")
         self.run_output_lines.append(
             f"[Process finished with exit code {exit_code}]"
         )
