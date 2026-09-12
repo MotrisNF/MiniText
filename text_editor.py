@@ -474,6 +474,9 @@ class TextEditor:
             "  :x       Close this tab (asks to save changes if any);\r\n",
             "           exits if it's the last tab open\r\n",
             "  :sx/:xs  Save and close this tab (or exit if last)\r\n",
+            "  :s!      Save every open tab, no confirmation\r\n",
+            "  :x!      Exit now, discarding all unsaved changes\r\n",
+            "  :sx!/:xs!  Save every open tab, then exit\r\n",
             "  q        Return to the editor\r\n",
             "\r\nPress q to return to the editor.",
             "\x1b[?25l\x1b[3;1H\x1b[?25h",
@@ -610,15 +613,18 @@ class TextEditor:
             output.append(f"\x1b[{terminal_row};1H\x1b[K{row_text}")
 
         output.append(f"\x1b[{input_row};1H\x1b[K")
+        if editor_col_offset:
+            output.append(f"\x1b[{input_row};{editor_col_offset + 1}H")
         if self.command is not None:
             output.append(f":{self.command}")
         elif self.search_query is not None:
             output.append(f"/{self.search_query}")
         elif self.status:
             output.append(self.status)
-        output.append(
-            f"\x1b[{terminal_height};1H\x1b[KMode: {self.mode.title()}"
-        )
+        output.append(f"\x1b[{terminal_height};1H\x1b[K")
+        if editor_col_offset:
+            output.append(f"\x1b[{terminal_height};{editor_col_offset + 1}H")
+        output.append(f"Mode: {self.mode.title()}")
         position_text = f"Line: {self.line + 1} Col: {self.column + 1}"
         position_column = max(1, terminal_width - len(position_text) + 1)
         output.append(
@@ -637,10 +643,10 @@ class TextEditor:
             )
         elif self.command is not None:
             cursor_row = input_row
-            cursor_column = len(self.command) + 2
+            cursor_column = editor_col_offset + len(self.command) + 2
         else:
             cursor_row = input_row
-            cursor_column = len(self.search_query) + 2
+            cursor_column = editor_col_offset + len(self.search_query) + 2
         output.append(f"\x1b[{cursor_row};{cursor_column}H\x1b[?25h")
         sys.stdout.write("".join(output))
         sys.stdout.flush()
@@ -913,6 +919,18 @@ class TextEditor:
             )
             self.line -= 1
 
+    def _delete_forward(self):
+        current_line = self.lines[self.line]
+        if self.column < len(current_line):
+            self._snapshot()
+            self.lines[self.line] = (
+                current_line[:self.column] + current_line[self.column + 1:]
+            )
+        elif self.line < len(self.lines) - 1:
+            self._snapshot()
+            next_line = self.lines.pop(self.line + 1)
+            self.lines[self.line] = current_line + next_line
+
     @staticmethod
     def _leading_tabs(line):
         count = 0
@@ -948,6 +966,39 @@ class TextEditor:
         self.modified = False
         self.status = f"Saved to {self.file_name}"
         return True
+
+    def _save_all_tabs(self):
+        self._sync_active_tab()
+        saved = 0
+        skipped = 0
+        for state in self.tabs:
+            if state["file_name"] is None:
+                skipped += 1
+                continue
+            try:
+                with open(
+                    state["file_name"], "w", encoding="utf-8"
+                ) as file:
+                    file.write("\n".join(state["lines"]))
+            except OSError:
+                skipped += 1
+                continue
+            state["modified"] = False
+            saved += 1
+        self._apply_buffer_state(self.tabs[self.active_tab])
+        if skipped:
+            self.status = f"Saved {saved} tab(s), skipped {skipped}"
+        else:
+            self.status = f"Saved {saved} tab(s)"
+
+    def _execute_forced_command(self, name):
+        if name == "s":
+            self._save_all_tabs()
+        elif name == "x":
+            self.running = False
+        elif name in ("sx", "xs"):
+            self._save_all_tabs()
+            self.running = False
 
     def _read_command_line(self, label="File name"):
         value = ""
@@ -1256,6 +1307,9 @@ class TextEditor:
             else:
                 self.status = "Usage: :f <text>"
             return
+        if command in ("s!", "x!", "sx!", "xs!"):
+            self._execute_forced_command(command[:-1])
+            return
         name, argument = self._parse_command(command)
         if name == "s" and argument is None:
             self._save()
@@ -1448,6 +1502,8 @@ class TextEditor:
                         self._new_line()
                     elif self.mode == "insert" and key in ("\x7f", "\b"):
                         self._backspace()
+                    elif self.mode == "insert" and key == "DELETE":
+                        self._delete_forward()
                     elif self.mode == "insert" and key == "\t":
                         suggestion = self._suggestion()
                         if suggestion:

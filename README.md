@@ -126,6 +126,7 @@ time to see the full command reference from inside the editor.
 | `Tab`       | Accept the current autocompletion suggestion, if any (otherwise inserts a tab) |
 | `Enter`     | New line, auto-indented                                   |
 | Backspace   | Delete backward; also removes an auto-closed bracket/quote pair if nothing was typed inside it |
+| Delete      | Delete forward (the character under the cursor)            |
 | `Esc`       | Return to Visual mode                                      |
 
 ### Commands (type `:` from Visual mode, then Enter)
@@ -135,6 +136,9 @@ time to see the full command reference from inside the editor.
 | `:s`          | Save                                                 |
 | `:x`          | Close the current tab (asking to save first if needed); exits if it's the last tab |
 | `:sx`, `:xs`  | Save and close the current tab (or exit if it's the last one) |
+| `:s!`         | Save every open tab, no confirmation                 |
+| `:x!`         | Exit immediately, discarding unsaved changes in every tab |
+| `:sx!`, `:xs!` | Save every open tab, then exit                      |
 | `:l <n>`      | Jump to line `n`                                     |
 | `:d`          | Delete the current selection                         |
 | `:d <n>`      | Delete line `n`                                      |
@@ -157,6 +161,10 @@ it stays visible after you leave focus - `:w` is the "keep it open"
 toggle, `w` is "let me look at it for a moment". `mini .` (or
 `mini <dir>`) starts with the panel shown and focused, as it always
 did.
+
+While the panel is visible, the status/command line and the mode bar
+at the bottom start right where the panel ends, lining up with the
+code above them instead of running under the panel.
 
 | Key            | Action                                                     |
 |----------------|---------------------------------------------------------------|
