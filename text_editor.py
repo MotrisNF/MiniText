@@ -1234,6 +1234,7 @@ class TextEditor:
         self.run_output_lines.append(
             f"[Process finished with exit code {exit_code}]"
         )
+        self.run_output_lines.append("(Press Esc to close)")
 
     def _stop_run(self):
         if self.run_process is not None and self.run_process.poll() is None:
