@@ -52,6 +52,7 @@ if [ "${1:-}" = "--uninstall" ]; then
   if [ -e "$HOME/.minirc.bak" ]; then rm -f "$HOME/.minirc.bak"; echo "  Removed $HOME/.minirc.bak"; fi
   remove_from_path
   echo "Uninstalled."
+  echo "  If this shell still finds an old 'mini', run 'hash -r' (or open a new terminal)."
   exit 0
 fi
 

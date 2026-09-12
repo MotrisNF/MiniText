@@ -36,6 +36,9 @@ usable as a general-purpose text editor for anything else.
   screen, right above the code - the active tab shares the editor's
   own background, inactive tabs are drawn in a muted shade, separated
   by a thin vertical line.
+- `:run` executes the current `.py` file and streams its output live
+  in a split below the code, over a real pty so `input()` works;
+  Ctrl+C interrupts the running program without affecting Mini.
 - A theme system with three built-in palettes (`base`, `dark`,
   `light`), fully configurable through a plain-text config file, with
   an automatic backup that protects against invalid edits.
@@ -153,7 +156,24 @@ time to see the full command reference from inside the editor.
 | `:u`          | Undo                                                 |
 | `:r`          | Redo                                                 |
 | `:w`          | Toggle the worktree panel's visibility                |
+| `:run`        | Run this file and show its output below the code (also `:terminal`) |
 | `:help`       | Show the in-editor help screen                       |
+
+### Running a file
+
+`:run` (or `:terminal`) saves the current `.py` file, runs it with
+`python3`, and splits the code area horizontally to show its output
+live underneath as it prints. It uses a real pty for the child
+process, so `input()` works: type while the panel is focused and
+press Enter, exactly like a normal terminal. Ctrl+C sends an
+interrupt to the running program (it does not affect Mini itself).
+`Esc` unfocuses the panel while the program is still running, leaving
+it going in the background - the output keeps updating even without
+pressing anything - and closes the panel once you press `Esc` after
+it has finished. Basic ANSI colors in the program's output are shown
+as-is; cursor movement and other escape sequences are stripped, so
+full-screen interactive programs (`curses` apps, `less`, and the
+like) aren't supported here - only plain print-style output.
 
 ### Worktree panel
 
@@ -276,3 +296,8 @@ Mini is intentionally small. Some notable limitations:
   (a binary file, or text in another encoding) is refused with a
   status message instead of being loaded, so it can't be garbled by
   a lossy read-then-save.
+- `:run` only knows how to run `.py` files with `python3`, and is not
+  a full terminal emulator: it understands plain text and basic ANSI
+  colors, but not cursor movement, so full-screen programs (`curses`
+  apps, pagers, `ssh`, and the like) won't display correctly inside
+  it.

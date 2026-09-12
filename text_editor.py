@@ -1,10 +1,12 @@
 import builtins
 import keyword
 import os
+import pty
 import re
 import select
 import shutil
 import signal
+import subprocess
 import sys
 import termios
 import tty
@@ -61,6 +63,27 @@ def _is_word_char(character):
     return character.isalnum() or character == "_"
 
 
+def _reset_child_signals():
+    # Mini ignores SIGINT/SIGQUIT for itself so Ctrl+C can't kill the
+    # editor; that disposition is otherwise inherited across fork+exec,
+    # which would make a :run child ignore them too. Reset both to the
+    # default before exec so the child (and our SIGINT forwarding) work
+    # normally.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGQUIT, signal.SIG_DFL)
+
+
+_RUN_ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+
+
+def _sanitize_run_output(text):
+    def keep_only_colors(match):
+        return match.group() if match.group().endswith("m") else ""
+
+    text = _RUN_ANSI_PATTERN.sub(keep_only_colors, text)
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _highlight(display_text):
     def _colorize(match):
         token = match.group()
@@ -91,6 +114,7 @@ def _get_terminal_size():
 
 
 _resize_wakeup_fd = None
+_run_output_fd = None
 
 
 def _enable_resize_wakeup():
@@ -149,6 +173,8 @@ def read_key():
     watch_fds = [stdin_fd]
     if _pending_byte is None and _resize_wakeup_fd is not None:
         watch_fds.append(_resize_wakeup_fd)
+    if _pending_byte is None and _run_output_fd is not None:
+        watch_fds.append(_run_output_fd)
     if _pending_byte is None:
         try:
             ready, _, _ = select.select(watch_fds, [], [])
@@ -160,6 +186,8 @@ def read_key():
             except OSError:
                 pass
             return "RESIZE"
+        if _run_output_fd is not None and _run_output_fd in ready:
+            return "RUN_OUTPUT"
 
     first_byte = _read_stdin_byte(stdin_fd)
     if not first_byte:
@@ -252,6 +280,11 @@ class TextEditor:
         self.worktree_selected_dir = self.worktree_root
         self.tabs = [self._current_buffer_state()]
         self.active_tab = 0
+        self.run_process = None
+        self.run_master_fd = None
+        self.run_output_lines = []
+        self.run_pending_text = ""
+        self.run_focused = False
 
     BUFFER_ATTRIBUTES = (
         "file_name", "lines", "line", "column", "selection_anchor",
@@ -453,6 +486,9 @@ class TextEditor:
             "  Ctrl+Arrows  Select text (Visual mode)\r\n",
             "  w        Show and focus the worktree panel (Visual mode)\r\n",
             "  :w       Toggle the worktree panel's visibility\r\n",
+            "  :run     Run this .py file, output shown below the code\r\n",
+            "           (Ctrl+C interrupts it, Esc unfocuses/closes it,\r\n",
+            "           typing sends input to it)\r\n",
             "  Worktree: Up/Down move, Enter opens a file as a tab\r\n",
             "    (or switches to it if already open) or\r\n",
             "    expands/collapses a directory. Ctrl+F new file,\r\n",
@@ -500,9 +536,22 @@ class TextEditor:
         terminal_width = _get_terminal_size().columns
         input_row = terminal_height - 1
         visible_rows = max(1, terminal_height - 3)
-        self._ensure_cursor_visible(visible_rows)
+        run_visible = (
+            self.run_process is not None or bool(self.run_output_lines)
+            or bool(self.run_pending_text)
+        )
+        run_display_lines = self.run_output_lines
+        if self.run_pending_text:
+            run_display_lines = run_display_lines + [self.run_pending_text]
+        if run_visible:
+            run_rows = max(3, visible_rows // 2)
+            editor_rows = max(1, visible_rows - run_rows - 1)
+        else:
+            run_rows = 0
+            editor_rows = visible_rows
+        self._ensure_cursor_visible(editor_rows)
         last_visible_line = min(
-            len(self.lines), self.viewport_top + visible_rows
+            len(self.lines), self.viewport_top + editor_rows
         )
         selection_bounds = self._selection_bounds()
         suggestion = self._suggestion()
@@ -527,13 +576,43 @@ class TextEditor:
             else []
         )
 
+        if sidebar_visible:
+            separator = f"{theme.LINE_NUMBER_COLOR}|{theme.COLOR_RESET} "
+            tab_bar_row = f"{self._pad_sidebar('')}{separator}{tab_bar}"
+        else:
+            tab_bar_row = tab_bar
         output = [
             "\x1b[2J\x1b[H", theme.BASE_STYLE,
-            f"{tab_bar}\r\n",
+            f"{tab_bar_row}\r\n",
         ]
         for row_offset in range(visible_rows):
-            index = self.viewport_top + row_offset
-            if index < last_visible_line:
+            if run_visible and row_offset == editor_rows:
+                status_word = (
+                    "running" if self.run_process is not None else "finished"
+                )
+                divider_text = f" Output ({status_word}) "
+                divider_width = max(
+                    len(divider_text), terminal_width - editor_col_offset
+                )
+                editor_row = (
+                    f"{theme.LINE_NUMBER_COLOR}{divider_text}"
+                    f"{'-' * (divider_width - len(divider_text))}"
+                    f"{theme.COLOR_RESET}"
+                )
+            elif run_visible and row_offset > editor_rows:
+                run_row_index = row_offset - editor_rows - 1
+                output_index = (
+                    len(run_display_lines) - run_rows + run_row_index
+                )
+                if 0 <= output_index < len(run_display_lines):
+                    editor_row = (
+                        run_display_lines[output_index] + theme.BASE_STYLE
+                    )
+                else:
+                    editor_row = ""
+            elif (
+                index := self.viewport_top + row_offset
+            ) < last_visible_line:
                 text = self.lines[index]
                 is_current_line = index == self.line
                 if not show_indicator:
@@ -641,6 +720,11 @@ class TextEditor:
         if self.worktree_focused:
             cursor_row = 2 + 1 + self.worktree_cursor - self.worktree_scroll
             cursor_column = 1
+        elif self.run_focused:
+            cursor_row = 2 + editor_rows + run_rows
+            cursor_column = (
+                editor_col_offset + len(self.run_pending_text) + 1
+            )
         elif self.command is None and self.search_query is None:
             cursor_row = self.line - self.viewport_top + 2
             cursor_column = (
@@ -1077,6 +1161,92 @@ class TextEditor:
             self.worktree_visible = False
             self.worktree_visible_because_of_focus = False
 
+    def _start_run(self):
+        global _run_output_fd
+        if not self._is_python_file():
+            self.status = "Can only run .py files"
+            return
+        if self.run_process is not None and self.run_process.poll() is None:
+            self.run_focused = True
+            self.status = "A run is already in progress"
+            return
+        if self.modified or self.file_name is None:
+            if not self._save():
+                return
+        master_fd, slave_fd = pty.openpty()
+        try:
+            process = subprocess.Popen(
+                [sys.executable, os.path.basename(self.file_name)],
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                cwd=os.path.dirname(self.file_name) or ".",
+                close_fds=True,
+                preexec_fn=_reset_child_signals,
+            )
+        except OSError as error:
+            os.close(master_fd)
+            os.close(slave_fd)
+            self.status = f"Could not run: {error}"
+            return
+        os.close(slave_fd)
+        self.run_process = process
+        self.run_master_fd = master_fd
+        self.run_output_lines = [f"$ python3 {self.file_name}"]
+        self.run_pending_text = ""
+        self.run_focused = True
+        _run_output_fd = master_fd
+
+    def _pump_run_output(self):
+        try:
+            data = os.read(self.run_master_fd, 4096)
+        except OSError:
+            data = b""
+        if not data:
+            self._finish_run()
+            return
+        text = self.run_pending_text + _sanitize_run_output(
+            data.decode("utf-8", errors="replace")
+        )
+        *complete_lines, self.run_pending_text = text.split("\n")
+        self.run_output_lines.extend(complete_lines)
+        max_lines = 2000
+        if len(self.run_output_lines) > max_lines:
+            self.run_output_lines = self.run_output_lines[-max_lines:]
+
+    def _finish_run(self):
+        global _run_output_fd
+        exit_code = None
+        if self.run_process is not None:
+            exit_code = self.run_process.poll()
+            if exit_code is None:
+                self.run_process.wait()
+                exit_code = self.run_process.returncode
+        if self.run_master_fd is not None:
+            try:
+                os.close(self.run_master_fd)
+            except OSError:
+                pass
+        _run_output_fd = None
+        self.run_process = None
+        self.run_master_fd = None
+        if self.run_pending_text:
+            self.run_output_lines.append(self.run_pending_text)
+            self.run_pending_text = ""
+        self.run_output_lines.append(
+            f"[Process finished with exit code {exit_code}]"
+        )
+
+    def _stop_run(self):
+        if self.run_process is not None and self.run_process.poll() is None:
+            self.run_focused = False
+            return
+        if self.run_process is not None:
+            self._finish_run()
+        self.run_process = None
+        self.run_master_fd = None
+        self.run_output_lines = []
+        self.run_pending_text = ""
+        self.run_focused = False
+
     def _find_tab_for_path(self, path):
         for index, state in enumerate(self.tabs):
             file_name = (
@@ -1370,6 +1540,8 @@ class TextEditor:
             if not self.worktree_visible:
                 self.worktree_focused = False
             self.worktree_visible_because_of_focus = False
+        elif name in ("run", "terminal") and argument is None:
+            self._start_run()
         elif name == "help" and argument is None:
             self.help_mode = True
         else:
@@ -1389,13 +1561,32 @@ class TextEditor:
                         continue
                     if key == "EOF":
                         break
-                    if key == "\x03":
+                    if key == "RUN_OUTPUT":
+                        self._pump_run_output()
+                        continue
+                    if key == "\x03" and not self.run_focused:
                         continue
                     if key == "\x04" and not self.worktree_focused:
                         continue
                     if self.help_mode:
                         if key == "q":
                             self.help_mode = False
+                        continue
+                    if self.run_focused:
+                        if key == "\x03":
+                            if self.run_process is not None:
+                                self.run_process.send_signal(signal.SIGINT)
+                        elif key == ESC:
+                            self._stop_run()
+                        elif self.run_master_fd is not None:
+                            if key in ("\r", "\n"):
+                                os.write(self.run_master_fd, b"\n")
+                            elif key in ("\x7f", "\b"):
+                                os.write(self.run_master_fd, b"\x7f")
+                            elif len(key) == 1 and key.isprintable():
+                                os.write(
+                                    self.run_master_fd, key.encode("utf-8")
+                                )
                         continue
                     if self.worktree_focused:
                         entries = self._worktree_entries()
