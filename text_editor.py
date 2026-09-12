@@ -236,6 +236,7 @@ class TextEditor:
         self.selection_anchor = None
         self.clipboard = None
         self.pending_count = ""
+        self.count_locked = False
         self.search_query = None
         self.last_search = None
         self.undo_stack = []
@@ -284,6 +285,7 @@ class TextEditor:
         self._apply_buffer_state(self.tabs[self.active_tab])
         self.selection_anchor = None
         self.pending_count = ""
+        self.count_locked = False
 
     def _open_in_new_tab(self, path):
         try:
@@ -460,6 +462,10 @@ class TextEditor:
             "  a s d f  Move left/up/down/right (Visual mode)\r\n",
             "  <n> then a move   Repeat that move n times (Visual)\r\n",
             "  :l <n>   Jump to line n\r\n",
+            "  :b       Jump to the beginning of the file\r\n",
+            "  :e       Jump to the end of the file\r\n",
+            "  :a       Jump to the start of the current line\r\n",
+            "  :f       Jump to the end of the current line\r\n",
             "  :d       Delete selection\r\n",
             "  :d <n>   Delete line n\r\n",
             "  :c       Copy selection, or the current line if none\r\n",
@@ -468,7 +474,7 @@ class TextEditor:
             "  :vl <n>  Paste as a new line before line n\r\n",
             "  :u / Ctrl+Z  Undo\r\n",
             "  :r / Ctrl+Y  Redo\r\n",
-            "  /text or :f text  Search\r\n",
+            "  /text     Search\r\n",
             "  n        Repeat last search (Visual mode)\r\n",
             "  :s       Save\r\n",
             "  :x       Close this tab (asks to save changes if any);\r\n",
@@ -668,7 +674,7 @@ class TextEditor:
 
     def _consume_count(self):
         count = int(self.pending_count) if self.pending_count else 1
-        self.pending_count = ""
+        self.count_locked = True
         return max(1, count)
 
     def _current_word_prefix(self):
@@ -1037,6 +1043,7 @@ class TextEditor:
         self.column = 0
         self.selection_anchor = None
         self.pending_count = ""
+        self.count_locked = False
         self.command = None
         self.search_query = None
         self.undo_stack = []
@@ -1299,14 +1306,6 @@ class TextEditor:
         command = self.command
         self.command = None
         self.mode = "visual"
-        if command == "f" or command.startswith("f "):
-            query = command[1:].strip()
-            if query:
-                self.last_search = query
-                self._find_next(query, from_current=False)
-            else:
-                self.status = "Usage: :f <text>"
-            return
         if command in ("s!", "x!", "sx!", "xs!"):
             self._execute_forced_command(command[:-1])
             return
@@ -1335,6 +1334,22 @@ class TextEditor:
                 self._close_current_tab()
         elif name == "l" and argument is not None:
             self._jump_to_line(argument)
+        elif name == "b" and argument is None:
+            self.line = 0
+            self.column = 0
+            self.selection_anchor = None
+            self.status = "Beginning of file"
+        elif name == "e" and argument is None:
+            self.line = len(self.lines) - 1
+            self.column = 0
+            self.selection_anchor = None
+            self.status = "End of file"
+        elif name == "a" and argument is None:
+            self.column = 0
+            self.selection_anchor = None
+        elif name == "f" and argument is None:
+            self.column = len(self.lines[self.line])
+            self.selection_anchor = None
         elif name == "d" and argument is None:
             if self._delete_selection():
                 self.status = "Deleted selection"
@@ -1444,10 +1459,15 @@ class TextEditor:
                     if self.mode == "visual" and key in ASDF_TO_ARROW:
                         key = ASDF_TO_ARROW[key]
                     if self.mode == "visual" and key.isdigit():
-                        self.pending_count += key
+                        if self.count_locked:
+                            self.pending_count = key
+                            self.count_locked = False
+                        else:
+                            self.pending_count += key
                         continue
                     if self.mode == "visual" and key not in MOVEMENT_KEYS:
                         self.pending_count = ""
+                        self.count_locked = False
 
                     if key == ESC:
                         self.mode = "visual"

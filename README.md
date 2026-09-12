@@ -110,7 +110,7 @@ time to see the full command reference from inside the editor.
 | Key                     | Action                                   |
 |--------------------------|-------------------------------------------|
 | Arrow keys, or `a`/`s`/`d`/`f` | Move left/up/down/right             |
-| A number, then a move key | Repeat that move that many times (`5f` moves right 5 times) |
+| A number, then a move key | Repeat that move that many times (`5f` moves right 5 times). The number stays active for further taps of a move key too - handy if it auto-repeats a digit and a movement key together - until you type a new number or press a non-movement key |
 | `Ctrl` + arrow key        | Extend the selection while moving       |
 | `i`                       | Enter Insert mode                       |
 | `w`                       | Focus the worktree panel (shows it first if hidden) |
@@ -140,6 +140,10 @@ time to see the full command reference from inside the editor.
 | `:x!`         | Exit immediately, discarding unsaved changes in every tab |
 | `:sx!`, `:xs!` | Save every open tab, then exit                      |
 | `:l <n>`      | Jump to line `n`                                     |
+| `:b`          | Jump to the beginning of the file                    |
+| `:e`          | Jump to the end of the file                          |
+| `:a`          | Jump to the start of the current line                |
+| `:f`          | Jump to the end of the current line                  |
 | `:d`          | Delete the current selection                         |
 | `:d <n>`      | Delete line `n`                                      |
 | `:c`          | Copy the selection, or the current line if none is selected |
@@ -148,7 +152,6 @@ time to see the full command reference from inside the editor.
 | `:vl <n>`     | Paste as a new line before line `n`                  |
 | `:u`          | Undo                                                 |
 | `:r`          | Redo                                                 |
-| `:f <text>`   | Search for `text`                                    |
 | `:w`          | Toggle the worktree panel's visibility                |
 | `:help`       | Show the in-editor help screen                       |
 
