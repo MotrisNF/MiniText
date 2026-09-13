@@ -21,18 +21,26 @@ usable as a general-purpose text editor for anything else.
   `import` or `from`, standard library modules as well as `.py`
   files and packages found next to the file being edited.
 - Matching-bracket and matching-quote highlighting, for `()`, `[]`,
-  `{}`, `'` and `"`, in either direction.
-- Auto-closing of brackets and quotes, with smart backspace: deleting
-  an opening character removes its auto-inserted counterpart too, but
-  only if nothing was typed between them.
+  `{}`, `'` and `"`, in either direction and across lines.
+- Auto-closing of brackets and quotes - only when the spot to the
+  right is empty, whitespace, or another closing character, so typing
+  one in the middle of existing text doesn't insert a stray partner -
+  with smart backspace: deleting an opening character removes its
+  auto-inserted counterpart too, but only if nothing was typed between
+  them.
 - Auto-indentation on Enter, carrying over the current line's
-  indentation and adding one level after a trailing colon.
+  indentation and adding one level after a trailing colon. Pressing
+  Enter right between a matching pair of brackets (`foo(|)`) instead
+  splits into three lines - the opening line, an empty line indented
+  one level further where the cursor lands, and the closing bracket
+  on its own line back at the original indentation.
 - A worktree file explorer shown as a side panel next to the editor,
   for browsing, opening, creating, and deleting files and directories
   without leaving the terminal. Opening a file from the panel always
   gives it its own tab (switching to it instead if it's already
-  open), so every file you open stays open; `Tab` cycles between open
-  tabs in Visual mode. A tab bar always sits at the very top of the
+  open), so every file you open stays open; `Tab`/`Shift+Tab` cycle
+  forward/backward between open tabs in Visual mode. A tab bar always
+  sits at the very top of the
   screen, right above the code - the active tab shares the editor's
   own background, inactive tabs are drawn in a muted shade, separated
   by a thin vertical line.
@@ -121,6 +129,7 @@ time to see the full command reference from inside the editor.
 | `n`                       | Repeat the last search                  |
 | `Ctrl+Z`                  | Undo                                    |
 | `Ctrl+Y`                  | Redo                                    |
+| `Tab` / `Shift+Tab`       | Switch to the next / previous tab       |
 
 ### Insert mode
 
@@ -282,8 +291,10 @@ Mini is intentionally small. Some notable limitations:
 
 - Syntax highlighting and autocompletion only apply to files with a
   `.py` extension.
-- Highlighting and bracket/quote matching work line by line, without
-  awareness of multi-line strings.
+- Syntax highlighting colors each line independently, without
+  awareness of multi-line strings (a triple-quoted string spanning
+  several lines won't be colored as one block). Bracket/quote
+  matching itself does search across lines.
 - Undo/redo is granular: each keystroke that changes the text is its
   own undo step.
 - Search is a plain, case-insensitive substring match; there is no

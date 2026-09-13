@@ -226,6 +226,8 @@ def read_key():
         return "CTRL-LEFT" if ctrl else "LEFT"
     if final == "~" and modifier_parts[0] == "3":
         return "DELETE"
+    if final == "Z":
+        return "SHIFT-TAB"
     return ESC
 
 
@@ -410,13 +412,24 @@ class TextEditor:
         return None
 
     def _find_matching_quote(self, quote_character):
-        line = self.lines[self.line]
-        for column_index in range(self.column + 1, len(line)):
-            if line[column_index] == quote_character:
-                return (self.line, column_index)
-        for column_index in range(self.column - 1, -1, -1):
-            if line[column_index] == quote_character:
-                return (self.line, column_index)
+        total_lines = len(self.lines)
+        for line_index in range(self.line, total_lines):
+            text = self.lines[line_index]
+            start_column = (
+                self.column + 1 if line_index == self.line else 0
+            )
+            for column_index in range(start_column, len(text)):
+                if text[column_index] == quote_character:
+                    return (line_index, column_index)
+        for line_index in range(self.line, -1, -1):
+            text = self.lines[line_index]
+            end_column = (
+                self.column - 1 if line_index == self.line
+                else len(text) - 1
+            )
+            for column_index in range(end_column, -1, -1):
+                if text[column_index] == quote_character:
+                    return (line_index, column_index)
         return None
 
     def _find_bracket_forward(self, opening, closing):
@@ -495,6 +508,7 @@ class TextEditor:
             "    Ctrl+D new folder, Del deletes, v/Esc return focus,\r\n",
             "    : or i jump to Command/Insert\r\n",
             "  Tab      Switch to the next tab (Visual mode)\r\n",
+            "  Shift+Tab  Switch to the previous tab (Visual mode)\r\n",
             "  a s d f  Move left/up/down/right (Visual mode)\r\n",
             "  <n> then a move   Repeat that move n times (Visual)\r\n",
             "  :l <n>   Jump to line n\r\n",
@@ -972,7 +986,16 @@ class TextEditor:
             self.column += 1
             return
         self._snapshot()
-        closing_character = PAIRS.get(character, "")
+        closing_character = ""
+        if character in PAIRS:
+            next_character = (
+                current_line[self.column]
+                if self.column < len(current_line) else ""
+            )
+            gap_is_free = next_character == "" or next_character.isspace()
+            next_is_closing = next_character in PAIRS.values()
+            if gap_is_free or next_is_closing:
+                closing_character = PAIRS[character]
         self.lines[self.line] = (
             current_line[:self.column]
             + character
@@ -1036,6 +1059,18 @@ class TextEditor:
         before = current_line[:self.column]
         after = current_line[self.column:]
         indent = self._leading_tabs(current_line)
+        between_brackets = (
+            before and before[-1] in BRACKET_PAIRS
+            and after and after[0] == BRACKET_PAIRS[before[-1]]
+        )
+        if between_brackets:
+            inner_indent = indent + "\t"
+            self.lines[self.line] = before
+            self.lines.insert(self.line + 1, inner_indent)
+            self.lines.insert(self.line + 2, indent + after)
+            self.line += 1
+            self.column = len(inner_indent)
+            return
         if before.rstrip().endswith(":"):
             indent += "\t"
         self.lines[self.line] = before
@@ -1685,6 +1720,14 @@ class TextEditor:
                     ):
                         self._switch_to_tab(
                             (self.active_tab + 1) % len(self.tabs)
+                        )
+                    elif (
+                        self.mode == "visual"
+                        and key == "SHIFT-TAB"
+                        and len(self.tabs) > 1
+                    ):
+                        self._switch_to_tab(
+                            (self.active_tab - 1) % len(self.tabs)
                         )
                     elif self.mode == "visual" and key == "i":
                         self.mode = "insert"
