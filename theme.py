@@ -57,6 +57,8 @@ _COLOR_KINDS = {
     "SUGGESTION_COLOR": "fg",
     "PLACEHOLDER_COLOR": "fg",
     "INACTIVE_TAB_COLOR": "bg",
+    "RULER_COLOR": "fg",
+    "LINE_LENGTH_ERROR_COLOR": "fg",
 }
 
 DEFAULT_THEMES = {
@@ -65,25 +67,32 @@ DEFAULT_THEMES = {
         "CURRENT_LINE_INDICATOR_COLOR": 214, "BRACKET_MATCH_COLOR": 238,
         "KEYWORD_COLOR": 33, "DUNDER_COLOR": 11, "TYPE_COLOR": 2,
         "FUNCTION_COLOR": 5, "SUGGESTION_COLOR": 244, "PLACEHOLDER_COLOR": 244,
-        "INACTIVE_TAB_COLOR": 232,
+        "INACTIVE_TAB_COLOR": 232, "RULER_COLOR": 238,
+        "LINE_LENGTH_ERROR_COLOR": 196,
     },
     "dark": {
         "BACKGROUND_COLOR": 233, "TEXT_COLOR": 250, "LINE_NUMBER_COLOR": 240,
         "CURRENT_LINE_INDICATOR_COLOR": 208, "BRACKET_MATCH_COLOR": 236,
         "KEYWORD_COLOR": 39, "DUNDER_COLOR": 221, "TYPE_COLOR": 78,
         "FUNCTION_COLOR": 176, "SUGGESTION_COLOR": 240, "PLACEHOLDER_COLOR": 240,
-        "INACTIVE_TAB_COLOR": 236,
+        "INACTIVE_TAB_COLOR": 236, "RULER_COLOR": 236,
+        "LINE_LENGTH_ERROR_COLOR": 196,
     },
     "light": {
         "BACKGROUND_COLOR": 253, "TEXT_COLOR": 235, "LINE_NUMBER_COLOR": 246,
         "CURRENT_LINE_INDICATOR_COLOR": 166, "BRACKET_MATCH_COLOR": 250,
         "KEYWORD_COLOR": 18, "DUNDER_COLOR": 94, "TYPE_COLOR": 22,
         "FUNCTION_COLOR": 90, "SUGGESTION_COLOR": 246, "PLACEHOLDER_COLOR": 246,
-        "INACTIVE_TAB_COLOR": 250,
+        "INACTIVE_TAB_COLOR": 250, "RULER_COLOR": 249,
+        "LINE_LENGTH_ERROR_COLOR": 160,
     },
 }
+# flake8/pycodestyle's own default max-line-length, reused here so a
+# fresh install's ruler lines up with what flake8 would flag anyway.
+DEFAULT_MAX_COLS = 79
 DEFAULT_SETTINGS = {
     "THEME": "base", "SHOW_NUMBER_LINE": True, "SHOW_LINE_INDICATOR": True,
+    "MAX_COLS": DEFAULT_MAX_COLS,
 }
 
 
@@ -94,6 +103,14 @@ def _parse_bool(value, fallback):
     if normalized in ("false", "0", "no", "off"):
         return False
     return fallback
+
+
+def _parse_positive_int(value, fallback):
+    try:
+        parsed = int(value.strip())
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
 
 
 def _parse_rc(path):
@@ -134,6 +151,12 @@ def _resolve_settings(primary, backup):
             if key in source:
                 settings[key] = _parse_bool(source[key], settings[key])
                 break
+    for source in (primary, backup):
+        if "MAX_COLS" in source:
+            settings["MAX_COLS"] = _parse_positive_int(
+                source["MAX_COLS"], settings["MAX_COLS"]
+            )
+            break
     for source in (primary, backup):
         if source.get("THEME"):
             settings["THEME"] = source["THEME"]
@@ -183,6 +206,9 @@ def _default_rc_text():
         f"THEME={DEFAULT_SETTINGS['THEME']}",
         f"SHOW_NUMBER_LINE={DEFAULT_SETTINGS['SHOW_NUMBER_LINE']}",
         f"SHOW_LINE_INDICATOR={DEFAULT_SETTINGS['SHOW_LINE_INDICATOR']}",
+        "# MAX_COLS draws a ruler at that column (flake8's own default,",
+        "# 79, by default here too) and flags lines that cross it.",
+        f"MAX_COLS={DEFAULT_SETTINGS['MAX_COLS']}",
         "",
         "# Each color below is an xterm 256-color palette number (0-255).",
         "# https://www.ditig.com/256-colors-cheat-sheet is a handy chart.",
@@ -201,6 +227,7 @@ def _refresh_backup_if_valid(settings, primary_settings, primary_themes):
         "THEME" in primary_settings
         and "SHOW_NUMBER_LINE" in primary_settings
         and "SHOW_LINE_INDICATOR" in primary_settings
+        and "MAX_COLS" in primary_settings
         and _is_theme_fully_valid(settings["THEME"], primary_themes)
     )
     if not fully_valid:
@@ -241,6 +268,7 @@ _settings, _colors = _load()
 
 SHOW_NUMBER_LINE = _settings["SHOW_NUMBER_LINE"]
 SHOW_LINE_INDICATOR = _settings["SHOW_LINE_INDICATOR"]
+MAX_COLS = _settings["MAX_COLS"]
 
 BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", _colors["BACKGROUND_COLOR"])
 TEXT_COLOR = _ansi("TEXT_COLOR", _colors["TEXT_COLOR"])
@@ -273,6 +301,11 @@ PLACEHOLDER_RESET = BASE_STYLE
 
 INACTIVE_TAB_COLOR = _ansi(
     "INACTIVE_TAB_COLOR", _colors["INACTIVE_TAB_COLOR"]
+)
+
+RULER_COLOR = _ansi("RULER_COLOR", _colors["RULER_COLOR"])
+LINE_LENGTH_ERROR_COLOR = _ansi(
+    "LINE_LENGTH_ERROR_COLOR", _colors["LINE_LENGTH_ERROR_COLOR"]
 )
 
 

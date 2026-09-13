@@ -5,6 +5,7 @@ import os
 import pty
 import re
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -227,6 +228,47 @@ def _local_class_methods(source_text, class_name):
                 )
             }
     return None
+
+
+def _enclosing_class_members(source_text, line_index):
+    """For `self.<TAB>`: the innermost `class ...:` whose body contains
+    line `line_index` (0-indexed), read the same way as
+    `_local_class_methods` - plus every `self.attr = ...` found
+    anywhere in that class, since those instance attributes are just
+    as much a part of `self.`'s real API as its methods are."""
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError:
+        return None
+    target_line = line_index + 1
+    enclosing = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        start = node.lineno
+        end = getattr(node, "end_lineno", start)
+        # +1 tolerance: blanking the current line for the parse can
+        # shrink a class's reported end_lineno by exactly that one
+        # line whenever it was the class's last line - the common
+        # case of typing "self." right after the previous statement.
+        if start <= target_line <= end + 1:
+            if enclosing is None or start > enclosing.lineno:
+                enclosing = node
+    if enclosing is None:
+        return None
+    names = set()
+    for item in ast.walk(enclosing):
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not (item.name.startswith("__") and item.name.endswith("__")):
+                names.add(item.name)
+        elif (
+            isinstance(item, ast.Attribute)
+            and isinstance(item.ctx, ast.Store)
+            and isinstance(item.value, ast.Name)
+            and item.value.id == "self"
+        ):
+            names.add(item.attr)
+    return names
 
 
 def _reset_child_signals():
@@ -672,6 +714,8 @@ class TextEditor:
             "  :run     Run this .py file, output shown below the code\r\n",
             "           (Ctrl+C interrupts it, Esc unfocuses/closes it,\r\n",
             "           typing sends input to it)\r\n",
+            "  :lint    Run flake8 + mypy on this file, same output\r\n",
+            "           panel as :run; deletes .mypy_cache afterward\r\n",
             "  Worktree: Up/Down or j/k move, l expands a directory,\r\n",
             "    h collapses it, Enter opens a file as a tab\r\n",
             "    (or switches to it if already open) or\r\n",
@@ -771,6 +815,7 @@ class TextEditor:
             "\x1b[2J\x1b[H", theme.BASE_STYLE,
             f"{tab_bar_row}\r\n",
         ]
+        ruler_overlay = []
         for row_offset in range(visible_rows):
             if run_visible and row_offset == editor_rows:
                 status_word = (
@@ -863,6 +908,24 @@ class TextEditor:
                         )
                     )
                 editor_row = f"{marker}{number}{displayed}"
+                display_length = len(self._display_text(text))
+                if display_length > theme.MAX_COLS:
+                    error_column = editor_col_offset + 1
+                    ruler_overlay.append(
+                        f"\x1b[{2 + row_offset};{error_column}H"
+                        f"{theme.LINE_LENGTH_ERROR_COLOR}●"
+                        f"{theme.BASE_STYLE}"
+                    )
+                else:
+                    ruler_column = (
+                        editor_col_offset + gutter_width + 1
+                        + theme.MAX_COLS
+                    )
+                    if ruler_column <= terminal_width:
+                        ruler_overlay.append(
+                            f"\x1b[{2 + row_offset};{ruler_column}H"
+                            f"{theme.RULER_COLOR}│{theme.BASE_STYLE}"
+                        )
             elif index == last_visible_line and show_number:
                 placeholder_prefix = "   " if show_indicator else ""
                 editor_row = (
@@ -883,6 +946,7 @@ class TextEditor:
                 row_text = editor_row
             output.append(f"\x1b[{terminal_row};1H\x1b[K{row_text}")
 
+        output.extend(ruler_overlay)
         output.append(f"\x1b[{input_row};1H\x1b[K")
         if editor_col_offset:
             output.append(f"\x1b[{input_row};{editor_col_offset + 1}H")
@@ -1058,10 +1122,26 @@ class TextEditor:
                     return module_name, original_name
         return None
 
+    def _blanked_source_text(self):
+        """The whole buffer, joined into one string, with the line
+        being typed replaced by an empty one. Used before any `ast`
+        parse triggered by attribute completion: right at the moment
+        that fires (e.g. immediately after typing the "." itself),
+        the current line is guaranteed to be invalid Python on its
+        own, which would otherwise make the whole buffer fail to
+        parse every single time."""
+        source_lines = list(self.lines)
+        source_lines[self.line] = ""
+        return "\n".join(source_lines)
+
     def _infer_attribute_pool(self, name):
         """Names to offer for `name.<TAB>`, narrowed to name's actual
         type/class when it can be worked out from the buffer - or
         None to fall back to the generic mixed-type vocabulary."""
+        if name == "self":
+            return _enclosing_class_members(
+                self._blanked_source_text(), self.line
+            )
         expr = self._find_assignment_expr(name)
         if expr is None:
             return None
@@ -1072,15 +1152,9 @@ class TextEditor:
         if not call_match:
             return None
         class_name = call_match.group(1)
-        # The line being typed is blanked out before parsing: right at
-        # the moment this fires (e.g. immediately after typing the
-        # "." itself), that line is guaranteed to be invalid Python on
-        # its own, which would otherwise make the whole buffer fail to
-        # parse every single time.
-        source_lines = list(self.lines)
-        source_lines[self.line] = ""
-        source_text = "\n".join(source_lines)
-        local_methods = _local_class_methods(source_text, class_name)
+        local_methods = _local_class_methods(
+            self._blanked_source_text(), class_name
+        )
         if local_methods is not None:
             return local_methods
         found = self._imported_from_module(class_name)
@@ -1550,11 +1624,11 @@ class TextEditor:
             self.worktree_visible = False
             self.worktree_visible_because_of_focus = False
 
-    def _start_run(self):
+    def _start_process(self, command, label):
+        """Runs `command` in a pty, streaming its output live into the
+        same panel `:run`/`:terminal` uses - shared by `:lint` too, so
+        both get live output, Ctrl+C, and Esc-to-close for free."""
         global _run_output_fd
-        if not self._is_python_file():
-            self.status = "Can only run .py files"
-            return
         if self.run_process is not None and self.run_process.poll() is None:
             self.run_focused = True
             self.status = "A run is already in progress"
@@ -1565,7 +1639,7 @@ class TextEditor:
         master_fd, slave_fd = pty.openpty()
         try:
             process = subprocess.Popen(
-                [sys.executable, os.path.basename(self.file_name)],
+                command,
                 stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
                 cwd=os.path.dirname(self.file_name) or ".",
                 close_fds=True,
@@ -1579,10 +1653,27 @@ class TextEditor:
         os.close(slave_fd)
         self.run_process = process
         self.run_master_fd = master_fd
-        self.run_output_lines = [f"$ python3 {self.file_name}"]
+        self.run_output_lines = [f"$ {label}"]
         self.run_pending_text = ""
         self.run_focused = True
         _run_output_fd = master_fd
+
+    def _start_run(self):
+        if not self._is_python_file():
+            self.status = "Can only run .py files"
+            return
+        self._start_process(
+            [sys.executable, os.path.basename(self.file_name)],
+            f"python3 {self.file_name}",
+        )
+
+    def _start_lint(self):
+        if not self._is_python_file():
+            self.status = "Can only lint .py files"
+            return
+        name = shlex.quote(os.path.basename(self.file_name))
+        shell_command = f"flake8 {name}; mypy {name}; rm -rf .mypy_cache"
+        self._start_process(["sh", "-c", shell_command], "lint")
 
     def _pump_run_output(self):
         try:
@@ -1958,6 +2049,8 @@ class TextEditor:
             self.worktree_visible_because_of_focus = False
         elif name in ("run", "terminal") and argument is None:
             self._start_run()
+        elif name == "lint" and argument is None:
+            self._start_lint()
         elif name == "help" and argument is None:
             self.help_mode = True
         elif name == "config" and argument is None:

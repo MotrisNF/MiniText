@@ -23,10 +23,15 @@ usable as a general-purpose text editor for anything else.
   offers list methods (`append`, not `str`'s or `dict`'s), and
   `perro = Perro()` then `perro.la` offers `Perro`'s own methods -
   whether `Perro` is a class defined right in this file or one
-  imported with `from module import Perro`. This only follows a
-  single, literal `name = <expr>` line right before the cursor - no
-  control flow, no return-type inference - and falls back to every
-  builtin type's methods combined when nothing can be worked out. When
+  imported with `from module import Perro`. `self.` is its own case:
+  it offers the enclosing class's own methods plus every attribute
+  assigned anywhere in it as `self.attr = ...`, found by working out
+  which `class ...:` contains the cursor rather than looking for an
+  assignment (there isn't one - `self` is a parameter, never assigned
+  itself). Beyond `self`, this only follows a single, literal
+  `name = <expr>` line right before the cursor - no control flow, no
+  return-type inference - and falls back to every builtin type's
+  methods combined when nothing can be worked out. When
   the type is known this way, typing the `.` itself is enough to open
   the suggestions - no need to type any letters first, unlike every
   other completion context here, which needs at least 2.
@@ -70,6 +75,10 @@ usable as a general-purpose text editor for anything else.
 - `:run` executes the current `.py` file and streams its output live
   in a split below the code, over a real pty so `input()` works;
   Ctrl+C interrupts the running program without affecting Mini.
+  `:lint` runs `flake8` and `mypy` on it the same way.
+- A configurable line-length ruler (`MAX_COLS`, default 79 - flake8's
+  own default) drawn on every line that doesn't already reach it;
+  going past it anyway marks that line with a `●` in the gutter.
 - A theme system with three built-in palettes (`base`, `dark`,
   `light`), fully configurable through a plain-text config file, with
   an automatic backup that protects against invalid edits.
@@ -205,6 +214,7 @@ from a checkout.
 | `:r`          | Redo                                                 |
 | `:w`          | Toggle the worktree panel's visibility                |
 | `:run`        | Run this file and show its output below the code (also `:terminal`) |
+| `:lint`       | Run flake8 + mypy on this file, output shown the same way |
 | `:help`       | Show the in-editor help screen                       |
 
 ### Running a file
@@ -222,6 +232,11 @@ it has finished. Basic ANSI colors in the program's output are shown
 as-is; cursor movement and other escape sequences are stripped, so
 full-screen interactive programs (`curses` apps, `less`, and the
 like) aren't supported here - only plain print-style output.
+
+`:lint` saves the file and runs `flake8` then `mypy` on it in that
+same output panel (so it's Ctrl+C-able and closes with `Esc` the same
+way), deleting `.mypy_cache` once both finish. Needs `flake8` and
+`mypy` on your `PATH` - Mini doesn't install or bundle either.
 
 ### Worktree panel
 
@@ -281,6 +296,7 @@ except to refresh its backup copy.
 THEME=base
 SHOW_NUMBER_LINE=True
 SHOW_LINE_INDICATOR=True
+MAX_COLS=79
 
 [base]
 BACKGROUND_COLOR=235
@@ -295,6 +311,8 @@ FUNCTION_COLOR=5
 SUGGESTION_COLOR=244
 PLACEHOLDER_COLOR=244
 INACTIVE_TAB_COLOR=232
+RULER_COLOR=238
+LINE_LENGTH_ERROR_COLOR=196
 
 [dark]
 ...
@@ -307,9 +325,16 @@ INACTIVE_TAB_COLOR=232
   section name you add yourself.
 - `SHOW_NUMBER_LINE` and `SHOW_LINE_INDICATOR` toggle the line-number
   gutter and the `->` current-line marker.
+- `MAX_COLS` (default `79`, flake8's own default) draws a thin ruler
+  at that column on every line - only where the line doesn't already
+  reach it, so typing past it naturally overlaps and covers the ruler
+  instead of the two fighting for the same spot. A line that's
+  actually longer than `MAX_COLS` gets a `●` in `LINE_LENGTH_ERROR_COLOR`
+  where its line number/marker would be, instead of the ruler.
 - Every color is an xterm 256-color palette number (0-255); a chart
   such as <https://www.ditig.com/256-colors-cheat-sheet> is a
-  convenient reference.
+  convenient reference. `RULER_COLOR` and `LINE_LENGTH_ERROR_COLOR`
+  control the two `MAX_COLS` indicators above.
 
 If a value in `~/.minirc` is missing or invalid, Mini falls back to
 `~/.minirc.bak` (a copy of the last known-good configuration), and
@@ -372,3 +397,10 @@ Mini is intentionally small. Some notable limitations:
   colors, but not cursor movement, so full-screen programs (`curses`
   apps, pagers, `ssh`, and the like) won't display correctly inside
   it.
+- `:lint`'s "[Process finished with exit code N]" reflects the final
+  `rm -rf .mypy_cache` step, not flake8's or mypy's own exit code -
+  check the printed output itself for whether they found anything.
+- `MAX_COLS`'s line-length check counts display columns (tabs count
+  as the same 4 columns used everywhere else in Mini), while flake8's
+  own E501 counts raw characters (a tab is 1) - the two only disagree
+  when a line mixes tabs with long content, which is rare.
