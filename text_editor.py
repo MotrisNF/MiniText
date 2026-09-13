@@ -101,13 +101,29 @@ FROM_IMPORT_NAMES_PATTERN = re.compile(
 FROM_IMPORT_LINE_PATTERN = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)$")
 MAX_SUGGESTION_DROPDOWN_ITEMS = 8
 _MODULE_INTROSPECTION_SCRIPT = (
-    "import sys, importlib\n"
+    "import sys, importlib, os\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "module = importlib.import_module(sys.argv[2])\n"
-    "names = [\n"
+    "names = {\n"
     "    n for n in dir(module)\n"
     "    if not (n.startswith('__') and n.endswith('__'))\n"
-    "]\n"
+    "}\n"
+    # A package (regular or namespace - both have __path__) can be
+    # imported from with its submodules/subpackages too, and those
+    # aren't in dir() unless something already imported them - so
+    # its directory is scanned directly for candidates as well.
+    "for path in getattr(module, '__path__', []):\n"
+    "    try:\n"
+    "        entries = os.scandir(path)\n"
+    "    except OSError:\n"
+    "        continue\n"
+    "    for entry in entries:\n"
+    "        if entry.name in ('__init__.py', '__pycache__'):\n"
+    "            continue\n"
+    "        if entry.is_file() and entry.name.endswith('.py'):\n"
+    "            names.add(entry.name[:-3])\n"
+    "        elif entry.is_dir() and not entry.name.startswith('.'):\n"
+    "            names.add(entry.name)\n"
     "print('\\n'.join(names))\n"
 )
 
@@ -1064,13 +1080,14 @@ class TextEditor:
         except OSError:
             return names
         for entry in entries:
-            if entry.name == "__init__.py":
+            if entry.name in ("__init__.py", "__pycache__"):
                 continue
             if entry.is_file() and entry.name.endswith(".py"):
                 name = entry.name[:-len(".py")]
-            elif entry.is_dir() and os.path.isfile(
-                os.path.join(entry.path, "__init__.py")
-            ):
+            elif entry.is_dir() and not entry.name.startswith("."):
+                # A directory counts whether or not it has an
+                # __init__.py: Python 3.3+ can import a plain
+                # directory as a namespace package too.
                 name = entry.name
             else:
                 continue

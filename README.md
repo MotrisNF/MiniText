@@ -20,7 +20,13 @@ usable as a general-purpose text editor for anything else.
 - Autocompletion for `.py` files, drawing from words already used in
   the file plus Python's keywords and built-ins, and, after `import`
   or `from`, standard library modules as well as `.py` files and
-  packages found next to the file being edited. `name.` after an
+  directories found next to the file being edited - a directory
+  counts whether or not it has an `__init__.py`, since Python can
+  import a plain one as a namespace package too. `from a_package
+  import ` offers both what that package's `__init__.py` actually
+  defines and its submodules/subpackages (the `.py` files and
+  directories inside it), together, since which one you mean depends
+  on what you're about to type. `name.` after an
   assignment is type-aware: `patata = []` then `patata.app` only
   offers list methods (`append`, not `str`'s or `dict`'s), and
   `perro = Perro()` then `perro.la` offers `Perro`'s own methods -
