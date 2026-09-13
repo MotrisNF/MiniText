@@ -115,6 +115,7 @@ TYPE_NAMES = {
     "int", "float", "str", "bool", "list", "dict", "tuple", "set",
     "frozenset", "bytes", "bytearray", "complex", "object", "type",
 }
+DECLARATION_KEYWORDS = {"def", "class"}
 _TOKEN_PATTERN = re.compile(
     r"'(?:[^'\\]|\\.)*'"
     r'|"(?:[^"\\]|\\.)*"'
@@ -292,20 +293,28 @@ def _sanitize_run_output(text):
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _highlight(display_text):
+def _highlight(display_text, lookahead=""):
+    """`lookahead` is whatever real text follows `display_text` in the
+    actual line but isn't part of it - e.g. bracket-match rendering
+    splits a line right before a paren, so the piece ending in a
+    function name would otherwise never see the "(" that names it as
+    a call, right when it matters most (cursor on that bracket)."""
     def _colorize(match):
         token = match.group()
         if token[0] in ("'", '"'):
             return f"{theme.STRING_COLOR}{token}{theme.COLOR_RESET}"
         if token[0] == "#":
             return token
+        if token in DECLARATION_KEYWORDS:
+            return f"{theme.DECLARATION_COLOR}{token}{theme.COLOR_RESET}"
         if token in keyword.kwlist:
             return f"{theme.KEYWORD_COLOR}{token}{theme.COLOR_RESET}"
         if token.startswith("__"):
             return f"{theme.DUNDER_COLOR}{token}{theme.COLOR_RESET}"
         if token in TYPE_NAMES:
             return f"{theme.TYPE_COLOR}{token}{theme.COLOR_RESET}"
-        if display_text[match.end():].lstrip(" ").startswith("("):
+        rest = display_text[match.end():] + lookahead
+        if rest.lstrip(" ").startswith("("):
             return f"{theme.FUNCTION_COLOR}{token}{theme.COLOR_RESET}"
         return token
 
@@ -690,7 +699,7 @@ class TextEditor:
             bracket_character = text_segment[local_index]
             after = text_segment[local_index + 1:]
             return (
-                apply_highlight(self._display_text(before))
+                apply_highlight(self._display_text(before), bracket_character)
                 + theme.BRACKET_MATCH_START
                 + self._display_text(bracket_character)
                 + theme.BRACKET_MATCH_END
@@ -789,7 +798,7 @@ class TextEditor:
         suggestion = self._ghost_suggestion()
         bracket_match = self._matching_bracket_position()
         apply_highlight = _highlight if self._is_python_file() else (
-            lambda text: text
+            lambda text, lookahead="": text
         )
         show_number = theme.SHOW_NUMBER_LINE
         show_indicator = theme.SHOW_LINE_INDICATOR

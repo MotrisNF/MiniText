@@ -15,7 +15,8 @@ usable as a general-purpose text editor for anything else.
 - Syntax highlighting for `.py` files: keywords, dunder names
   (`__init__`, `__name__`, ...), built-in type names, function
   calls/definitions, and string literals (quotes included), each in
-  its own color.
+  its own color. `def` and `class` get a color of their own, separate
+  from the rest of the keywords.
 - Autocompletion for `.py` files, drawing from words already used in
   the file plus Python's keywords and built-ins, and, after `import`
   or `from`, standard library modules as well as `.py` files and
@@ -308,7 +309,7 @@ TEXT_COLOR=252
 LINE_NUMBER_COLOR=244
 CURRENT_LINE_INDICATOR_COLOR=214
 BRACKET_MATCH_COLOR=238
-KEYWORD_COLOR=160
+KEYWORD_COLOR=33
 DUNDER_COLOR=11
 TYPE_COLOR=2
 FUNCTION_COLOR=5
@@ -318,6 +319,7 @@ INACTIVE_TAB_COLOR=232
 RULER_COLOR=238
 LINE_LENGTH_ERROR_COLOR=196
 STRING_COLOR=117
+DECLARATION_COLOR=203
 
 [dark]
 ...
