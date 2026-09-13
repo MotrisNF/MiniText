@@ -130,10 +130,10 @@ def _show_update_banner():
 
     with raw_terminal():
         sys.stdout.write(
-            "Hay una nueva version de Mini disponible.\r\n"
-            "Ejecuta 'mini --update' para instalarla.\r\n"
+            "A new version of Mini is available.\r\n"
+            "Run 'mini --update' to install it.\r\n"
             "\r\n"
-            "Pulsa cualquier tecla para continuar...\r\n"
+            "Press any key to continue...\r\n"
         )
         sys.stdout.flush()
         read_key()
@@ -162,46 +162,46 @@ def run_update_command():
     """Handles `mini --update`."""
     if not _is_installed_copy():
         print(
-            "'mini --update' solo funciona en una instalacion hecha "
-            "con 'make install'."
+            "'mini --update' only works on an install made with "
+            "'make install'."
         )
         return
     src_dir, install_dir = _paths()
-    print("Comprobando actualizaciones...")
+    print("Checking for updates...")
     try:
         ahead = _remote_is_ahead(src_dir)
     except (subprocess.TimeoutExpired, OSError) as error:
-        print(f"No se pudo comprobar si hay actualizaciones: {error}")
+        print(f"Could not check for updates: {error}")
         return
     _write_last_check(install_dir)
     if ahead is None:
-        print("No se pudo contactar con el repositorio remoto.")
+        print("Could not reach the remote repository.")
         return
     local_hash = _git(src_dir, "rev-parse", "--short", "HEAD").stdout.strip()
     if not ahead:
-        print(f"Ya tienes la ultima version instalada (commit {local_hash}).")
+        print(f"Already up to date (commit {local_hash}).")
         return
     status = _git(src_dir, "status", "--porcelain")
     if status.stdout.strip():
         print(
-            "La instalacion tiene cambios sin confirmar, "
-            "se cancela la actualizacion."
+            "The install has uncommitted changes, "
+            "cancelling the update."
         )
         return
-    print("Actualizando...")
+    print("Updating...")
     pull = subprocess.run(
         ["git", "-C", src_dir, "pull", "--ff-only"], env=_GIT_ENV
     )
     if pull.returncode != 0:
-        print("git pull fallo. Actualizacion cancelada.")
+        print("git pull failed. Update cancelled.")
         return
     env_values = _read_env(install_dir)
     libdir = env_values.get("LIBDIR", install_dir)
     bindir = env_values.get("BINDIR")
     if not bindir:
         print(
-            "No se encontro la configuracion de la instalacion "
-            f"({os.path.join(install_dir, 'env')}); reinstala con "
+            "Could not find the install's configuration "
+            f"({os.path.join(install_dir, 'env')}); reinstall with "
             "'make install'."
         )
         return
@@ -209,18 +209,18 @@ def run_update_command():
         ["bash", os.path.join(src_dir, "install.sh"), libdir, bindir]
     )
     if install_result.returncode != 0:
-        print("La instalacion fallo.")
+        print("The install failed.")
         return
     new_hash = _git(src_dir, "rev-parse", "--short", "HEAD").stdout.strip()
-    print(f"Mini actualizado a la version {new_hash}.")
+    print(f"Mini updated to version {new_hash}.")
 
 
 def run_uninstall_command():
     """Handles `mini --uninstall`."""
     if not _is_installed_copy():
         print(
-            "'mini --uninstall' solo funciona en una instalacion hecha "
-            "con 'make install'."
+            "'mini --uninstall' only works on an install made with "
+            "'make install'."
         )
         return
     src_dir, install_dir = _paths()
@@ -229,25 +229,25 @@ def run_uninstall_command():
     bindir = env_values.get("BINDIR")
     if not bindir:
         print(
-            "No se encontro la configuracion de la instalacion "
-            f"({os.path.join(install_dir, 'env')}); no se puede "
-            "desinstalar automaticamente."
+            "Could not find the install's configuration "
+            f"({os.path.join(install_dir, 'env')}); can't "
+            "uninstall automatically."
         )
         return
     try:
         answer = input(
-            f"Esto eliminara {libdir}, {bindir}/mini, ~/.minirc y "
-            "~/.minirc.bak. Seguro? (y/n): "
+            f"This will remove {libdir}, {bindir}/mini, ~/.minirc and "
+            "~/.minirc.bak. Are you sure? (y/n): "
         )
     except (EOFError, KeyboardInterrupt):
-        print("\nCancelado.")
+        print("\nCancelled.")
         return
-    if answer.strip().lower() not in ("y", "yes", "s", "si", "sí"):
-        print("Cancelado.")
+    if answer.strip().lower() not in ("y", "yes"):
+        print("Cancelled.")
         return
     result = subprocess.run(
         ["bash", os.path.join(src_dir, "install.sh"),
          "--uninstall", libdir, bindir]
     )
     if result.returncode != 0:
-        print("La desinstalacion fallo.")
+        print("Uninstall failed.")
