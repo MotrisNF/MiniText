@@ -15,11 +15,19 @@ usable as a general-purpose text editor for anything else.
 - Syntax highlighting for `.py` files: keywords, dunder names
   (`__init__`, `__name__`, ...), built-in type names, and function
   calls/definitions, each in its own color.
-- Inline autocompletion ("ghost text") for `.py` files, drawing from
-  words already used in the file plus Python's keywords, built-ins,
-  common type methods (so `list.ind` suggests `index`), and, after
-  `import` or `from`, standard library modules as well as `.py`
-  files and packages found next to the file being edited.
+- Autocompletion for `.py` files, drawing from words already used in
+  the file plus Python's keywords, built-ins, common type methods (so
+  `list.ind` suggests `index`), and, after `import` or `from`,
+  standard library modules as well as `.py` files and packages found
+  next to the file being edited. After `from module import `, it
+  offers that module's actual members (`from sys import arg` suggests
+  `argv`) - found by really importing the module in an isolated,
+  short-lived subprocess, so this also works for your own local
+  files, not just the standard library. A single match shows as
+  inline "ghost text" (`Tab` accepts it); two or more open a dropdown
+  below the cursor - `Up`/`Down` move through it, `Tab` or `Enter`
+  accepts the highlighted entry, `Esc` dismisses it without leaving
+  Insert mode.
 - Matching-bracket and matching-quote highlighting, for `()`, `[]`,
   `{}`, `'` and `"`, in either direction and across lines.
 - Auto-closing of brackets and quotes - only when the spot to the
@@ -151,10 +159,11 @@ from a checkout.
 | Key         | Action                                                    |
 |-------------|------------------------------------------------------------|
 | `Tab`       | Accept the current autocompletion suggestion, if any (otherwise inserts a tab) |
-| `Enter`     | New line, auto-indented                                   |
+| `Enter`     | New line, auto-indented - or, while a suggestion dropdown is open, accepts the highlighted entry instead |
+| `Up` / `Down` | Move the cursor - or, while a suggestion dropdown is open, move the highlighted entry instead |
 | Backspace   | Delete backward; also removes an auto-closed bracket/quote pair if nothing was typed inside it |
 | Delete      | Delete forward (the character under the cursor)            |
-| `Esc`       | Return to Visual mode                                      |
+| `Esc`       | Dismiss the suggestion dropdown if one is open, otherwise return to Visual mode |
 
 ### Commands (type `:` from Visual mode, then Enter)
 
@@ -310,6 +319,12 @@ Mini is intentionally small. Some notable limitations:
 
 - Syntax highlighting and autocompletion only apply to files with a
   `.py` extension.
+- Completing names after `from module import ` actually imports that
+  module (in an isolated subprocess, not Mini's own process) to see
+  what it contains. For your own local files this means their
+  top-level code really runs - the same as if you executed them - the
+  first time you complete from them in a session; results are then
+  cached until you restart Mini, even if the file changes again.
 - Syntax highlighting colors each line independently, without
   awareness of multi-line strings (a triple-quoted string spanning
   several lines won't be colored as one block). Bracket/quote

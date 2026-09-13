@@ -46,6 +46,17 @@ MODULE_VOCABULARY = sorted(
     name for name in sys.stdlib_module_names if not name.startswith("_")
 )
 IMPORT_CONTEXT_PATTERN = re.compile(r"^\s*(?:from|import)\s+$")
+FROM_IMPORT_NAMES_PATTERN = re.compile(
+    r"^\s*from\s+(\S+)\s+import\s+"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*(?:\s+as\s+[A-Za-z_][A-Za-z0-9_]*)?\s*,\s*)*$"
+)
+MAX_SUGGESTION_DROPDOWN_ITEMS = 8
+_MODULE_INTROSPECTION_SCRIPT = (
+    "import sys, importlib\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "module = importlib.import_module(sys.argv[2])\n"
+    "print('\\n'.join(n for n in dir(module) if not n.startswith('_')))\n"
+)
 
 TYPE_NAMES = {
     "int", "float", "str", "bool", "list", "dict", "tuple", "set",
@@ -61,6 +72,42 @@ _TOKEN_PATTERN = re.compile(
 
 def _is_word_char(character):
     return character.isalnum() or character == "_"
+
+
+def _parse_imported_names(context_before):
+    """Names already typed before the cursor in a `from X import a, b, `
+    line, so they aren't offered again."""
+    import_part = context_before.split("import", 1)[1]
+    names = set()
+    for chunk in import_part.split(","):
+        name = chunk.strip().split(" as ")[0].strip()
+        if name:
+            names.add(name)
+    return names
+
+
+def _introspect_module_members(directory, module_name):
+    """Names `from module_name import <TAB>` could offer, found by
+    actually importing the module in a throwaway subprocess (with
+    `directory` on its sys.path, so local project files resolve too).
+
+    A subprocess - not an in-process import - because this runs
+    whatever top-level code the module has, including local files
+    still being edited; a timeout and total isolation from Mini itself
+    keep a slow or broken module from freezing the editor."""
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, "-c", _MODULE_INTROSPECTION_SCRIPT,
+                directory, module_name,
+            ],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return set()
+    if result.returncode != 0:
+        return set()
+    return set(result.stdout.split())
 
 
 def _reset_child_signals():
@@ -286,6 +333,10 @@ class TextEditor:
         self.run_output_lines = []
         self.run_pending_text = ""
         self.run_focused = False
+        self.suggestion_matches = []
+        self.suggestion_index = 0
+        self._suggestion_dismissed_at = None
+        self._import_members_cache = {}
 
     BUFFER_ATTRIBUTES = (
         "file_name", "lines", "line", "column", "selection_anchor",
@@ -494,7 +545,8 @@ class TextEditor:
             "  :help    Show this help\r\n",
             "  :config  Open ~/.minirc as a tab\r\n",
             "  i        Enter Insert mode\r\n",
-            "  Tab      Accept suggestion (Insert mode)\r\n",
+            "  Tab      Accept suggestion (Insert mode); with 2+\r\n",
+            "           matches, Up/Down/Enter also navigate/accept\r\n",
             "  Ctrl+Arrows  Select text (Visual mode)\r\n",
             "  w        Show and focus the worktree panel (Visual mode)\r\n",
             "  :w       Toggle the worktree panel's visibility\r\n",
@@ -568,7 +620,8 @@ class TextEditor:
             len(self.lines), self.viewport_top + editor_rows
         )
         selection_bounds = self._selection_bounds()
-        suggestion = self._suggestion()
+        self._refresh_suggestion_matches()
+        suggestion = self._ghost_suggestion()
         bracket_match = self._matching_bracket_position()
         apply_highlight = _highlight if self._is_python_file() else (
             lambda text: text
@@ -751,6 +804,16 @@ class TextEditor:
         else:
             cursor_row = input_row
             cursor_column = editor_col_offset + len(self.search_query) + 2
+        if (
+            self.mode == "insert"
+            and self.command is None
+            and self.search_query is None
+            and not self.worktree_focused
+            and not self.run_focused
+        ):
+            output.extend(self._suggestion_dropdown_output(
+                cursor_row, cursor_column, terminal_width, terminal_height
+            ))
         output.append(f"\x1b[{cursor_row};{cursor_column}H\x1b[?25h")
         sys.stdout.write("".join(output))
         sys.stdout.flush()
@@ -821,31 +884,50 @@ class TextEditor:
                 names.add(name)
         return names
 
-    def _suggestion(self):
-        if self.mode != "insert" or not self._is_python_file():
-            return ""
-        prefix = self._current_word_prefix()
-        if len(prefix) < MIN_SUGGESTION_PREFIX:
-            return ""
-        line = self.lines[self.line]
-        if self.column < len(line) and _is_word_char(line[self.column]):
-            return ""
-        prefix_start = self.column - len(prefix)
-        is_attribute = prefix_start > 0 and line[prefix_start - 1] == "."
-        is_import = bool(
-            IMPORT_CONTEXT_PATTERN.match(line[:prefix_start])
-        )
-        if is_import:
-            pools = (
-                self._collect_buffer_words(),
+    def _module_member_names(self, module_name):
+        directory = (
+            os.path.dirname(self.file_name) if self.file_name else ""
+        ) or os.getcwd()
+        cache_key = (directory, module_name)
+        if cache_key not in self._import_members_cache:
+            self._import_members_cache[cache_key] = (
+                _introspect_module_members(directory, module_name)
+            )
+        return self._import_members_cache[cache_key]
+
+    def _suggestion_pools(self, prefix_start, line):
+        context_before = line[:prefix_start]
+        from_import_match = FROM_IMPORT_NAMES_PATTERN.match(context_before)
+        if from_import_match:
+            already_imported = _parse_imported_names(context_before)
+            members = self._module_member_names(
+                from_import_match.group(1)
+            ) - already_imported
+            return (members,)
+        if IMPORT_CONTEXT_PATTERN.match(context_before):
+            return (
                 self._local_module_names(),
                 MODULE_VOCABULARY,
+                self._collect_buffer_words(),
             )
-        elif is_attribute:
-            pools = (self._collect_buffer_words(), ATTRIBUTE_VOCABULARY)
-        else:
-            pools = (self._collect_buffer_words(), PYTHON_VOCABULARY)
-        for pool in pools:
+        is_attribute = (
+            prefix_start > 0 and line[prefix_start - 1] == "."
+        )
+        if is_attribute:
+            return (self._collect_buffer_words(), ATTRIBUTE_VOCABULARY)
+        return (self._collect_buffer_words(), PYTHON_VOCABULARY)
+
+    def _compute_suggestion_matches(self):
+        if self.mode != "insert" or not self._is_python_file():
+            return []
+        prefix = self._current_word_prefix()
+        if len(prefix) < MIN_SUGGESTION_PREFIX:
+            return []
+        line = self.lines[self.line]
+        if self.column < len(line) and _is_word_char(line[self.column]):
+            return []
+        prefix_start = self.column - len(prefix)
+        for pool in self._suggestion_pools(prefix_start, line):
             matches = sorted(
                 (
                     word for word in pool
@@ -854,8 +936,55 @@ class TextEditor:
                 key=len,
             )
             if matches:
-                return matches[0][len(prefix):]
-        return ""
+                return matches
+        return []
+
+    def _refresh_suggestion_matches(self):
+        if self._suggestion_dismissed_at == (self.line, self.column):
+            self.suggestion_matches = []
+            return
+        self._suggestion_dismissed_at = None
+        matches = self._compute_suggestion_matches()
+        if matches != self.suggestion_matches:
+            self.suggestion_index = 0
+        self.suggestion_matches = matches
+
+    def _ghost_suggestion(self):
+        if len(self.suggestion_matches) != 1:
+            return ""
+        prefix = self._current_word_prefix()
+        return self.suggestion_matches[0][len(prefix):]
+
+    def _suggestion_dropdown_output(
+        self, cursor_row, cursor_column, terminal_width, terminal_height
+    ):
+        items = self.suggestion_matches[:MAX_SUGGESTION_DROPDOWN_ITEMS]
+        if len(items) < 2:
+            return []
+        prefix_length = len(self._current_word_prefix())
+        box_width = min(
+            max(len(word) for word in items) + 2,
+            max(1, terminal_width - 1),
+        )
+        max_column = terminal_width - box_width + 1
+        box_column = max(1, min(cursor_column - prefix_length, max_column))
+        box_row_start = cursor_row + 1
+        if box_row_start + len(items) - 1 > terminal_height - 1:
+            box_row_start = max(2, cursor_row - len(items))
+        rows = []
+        for offset, word in enumerate(items):
+            row = box_row_start + offset
+            if not 1 <= row <= terminal_height:
+                continue
+            text = f" {word} ".ljust(box_width)[:box_width]
+            if offset == self.suggestion_index:
+                style = theme.BRACKET_MATCH_START + theme.TEXT_COLOR
+            else:
+                style = theme.BASE_STYLE + theme.SUGGESTION_COLOR
+            rows.append(
+                f"\x1b[{row};{box_column}H{style}{text}{theme.BASE_STYLE}"
+            )
+        return rows
 
     def _snapshot(self):
         self.undo_stack.append((list(self.lines), self.line, self.column))
@@ -893,6 +1022,13 @@ class TextEditor:
             + current_line[self.column:]
         )
         self.column += len(suggestion)
+
+    def _accept_highlighted_suggestion(self):
+        prefix = self._current_word_prefix()
+        word = self.suggestion_matches[self.suggestion_index]
+        self._accept_suggestion(word[len(prefix):])
+        self.suggestion_matches = []
+        self.suggestion_index = 0
 
     def _update_selection(self, key):
         extending = self.mode == "visual" and key.startswith("CTRL-")
@@ -1297,9 +1433,10 @@ class TextEditor:
     def _open_config_file(self):
         path = theme.RC_PATH
         existing_tab = self._find_tab_for_path(path)
+        is_blank = self.lines == [""] and not self.modified
         if existing_tab is not None:
             self._switch_to_tab(existing_tab)
-        elif self.file_name is None and self.lines == [""] and not self.modified:
+        elif self.file_name is None and is_blank:
             self._load_file(path)
         else:
             self._open_in_new_tab(path)
@@ -1719,7 +1856,26 @@ class TextEditor:
                         self.pending_count = ""
                         self.count_locked = False
 
-                    if key == ESC:
+                    dropdown_open = (
+                        self.mode == "insert"
+                        and len(self.suggestion_matches) >= 2
+                    )
+                    if dropdown_open and key == "UP":
+                        self.suggestion_index = (
+                            self.suggestion_index - 1
+                        ) % len(self.suggestion_matches)
+                    elif dropdown_open and key == "DOWN":
+                        self.suggestion_index = (
+                            self.suggestion_index + 1
+                        ) % len(self.suggestion_matches)
+                    elif dropdown_open and key in ("\t", "\r", "\n"):
+                        self._accept_highlighted_suggestion()
+                    elif dropdown_open and key == ESC:
+                        self.suggestion_matches = []
+                        self._suggestion_dismissed_at = (
+                            self.line, self.column
+                        )
+                    elif key == ESC:
                         self.mode = "visual"
                         self.command = None
                         self.selection_anchor = None
@@ -1782,9 +1938,8 @@ class TextEditor:
                     elif self.mode == "insert" and key == "DELETE":
                         self._delete_forward()
                     elif self.mode == "insert" and key == "\t":
-                        suggestion = self._suggestion()
-                        if suggestion:
-                            self._accept_suggestion(suggestion)
+                        if self.suggestion_matches:
+                            self._accept_highlighted_suggestion()
                         else:
                             self._insert(key)
                     elif (
