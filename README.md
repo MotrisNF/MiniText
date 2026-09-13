@@ -16,10 +16,21 @@ usable as a general-purpose text editor for anything else.
   (`__init__`, `__name__`, ...), built-in type names, and function
   calls/definitions, each in its own color.
 - Autocompletion for `.py` files, drawing from words already used in
-  the file plus Python's keywords, built-ins, common type methods (so
-  `list.ind` suggests `index`), and, after `import` or `from`,
-  standard library modules as well as `.py` files and packages found
-  next to the file being edited. After `from module import `, it
+  the file plus Python's keywords and built-ins, and, after `import`
+  or `from`, standard library modules as well as `.py` files and
+  packages found next to the file being edited. `name.` after an
+  assignment is type-aware: `patata = []` then `patata.app` only
+  offers list methods (`append`, not `str`'s or `dict`'s), and
+  `perro = Perro()` then `perro.la` offers `Perro`'s own methods -
+  whether `Perro` is a class defined right in this file or one
+  imported with `from module import Perro`. This only follows a
+  single, literal `name = <expr>` line right before the cursor - no
+  control flow, no return-type inference - and falls back to every
+  builtin type's methods combined when nothing can be worked out. When
+  the type is known this way, typing the `.` itself is enough to open
+  the suggestions - no need to type any letters first, unlike every
+  other completion context here, which needs at least 2.
+  After `from module import `, it
   offers that module's actual members (`from sys import arg` suggests
   `argv`) - found by really importing the module in an isolated,
   short-lived subprocess, so this also works for your own local
@@ -27,7 +38,11 @@ usable as a general-purpose text editor for anything else.
   inline "ghost text" (`Tab` accepts it); two or more open a dropdown
   below the cursor - `Up`/`Down` move through it, `Tab` or `Enter`
   accepts the highlighted entry, `Esc` dismisses it without leaving
-  Insert mode.
+  Insert mode. A module's names starting with a single underscore are
+  offered too (only `__dunder__` names are hidden), since a small
+  local file's real API is often just that. Suggestions never trigger
+  inside a string or a comment, so typing free-form text there doesn't
+  get treated as Python code.
 - Matching-bracket and matching-quote highlighting, for `()`, `[]`,
   `{}`, `'` and `"`, in either direction and across lines.
 - Auto-closing of brackets and quotes - only when the spot to the
@@ -319,12 +334,23 @@ Mini is intentionally small. Some notable limitations:
 
 - Syntax highlighting and autocompletion only apply to files with a
   `.py` extension.
-- Completing names after `from module import ` actually imports that
-  module (in an isolated subprocess, not Mini's own process) to see
-  what it contains. For your own local files this means their
-  top-level code really runs - the same as if you executed them - the
-  first time you complete from them in a session; results are then
-  cached until you restart Mini, even if the file changes again.
+- Completing names after `from module import `, or completing
+  `name.` when `name` was assigned an imported class, actually
+  imports that module (in an isolated subprocess, not Mini's own
+  process) to see what it contains. For your own local files this
+  means their top-level code really runs - the same as if you
+  executed them - the first time you complete from them in a session;
+  results are then cached until you restart Mini, even if the file
+  changes again. A class defined right in the file being edited is
+  read with `ast` instead (never executed), but only when the buffer
+  currently parses as valid Python - a mid-edit syntax error just
+  means no class-specific suggestions until it's valid again.
+- Type-aware `name.` completion only recognizes `name` as whatever a
+  single, literal `name = <expr>` assignment line before the cursor
+  looks like - it doesn't track reassignment through branches or
+  loops, return types of your own functions, or `module.Class(...)`
+  written with the module name inline (only a `Class` imported
+  directly via `from module import Class`).
 - Syntax highlighting colors each line independently, without
   awareness of multi-line strings (a triple-quoted string spanning
   several lines won't be colored as one block). Bracket/quote
