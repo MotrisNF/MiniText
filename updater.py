@@ -213,3 +213,41 @@ def run_update_command():
         return
     new_hash = _git(src_dir, "rev-parse", "--short", "HEAD").stdout.strip()
     print(f"Mini actualizado a la version {new_hash}.")
+
+
+def run_uninstall_command():
+    """Handles `mini --uninstall`."""
+    if not _is_installed_copy():
+        print(
+            "'mini --uninstall' solo funciona en una instalacion hecha "
+            "con 'make install'."
+        )
+        return
+    src_dir, install_dir = _paths()
+    env_values = _read_env(install_dir)
+    libdir = env_values.get("LIBDIR", install_dir)
+    bindir = env_values.get("BINDIR")
+    if not bindir:
+        print(
+            "No se encontro la configuracion de la instalacion "
+            f"({os.path.join(install_dir, 'env')}); no se puede "
+            "desinstalar automaticamente."
+        )
+        return
+    try:
+        answer = input(
+            f"Esto eliminara {libdir}, {bindir}/mini, ~/.minirc y "
+            "~/.minirc.bak. Seguro? (y/n): "
+        )
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelado.")
+        return
+    if answer.strip().lower() not in ("y", "yes", "s", "si", "sí"):
+        print("Cancelado.")
+        return
+    result = subprocess.run(
+        ["bash", os.path.join(src_dir, "install.sh"),
+         "--uninstall", libdir, bindir]
+    )
+    if result.returncode != 0:
+        print("La desinstalacion fallo.")

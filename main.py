@@ -32,6 +32,9 @@ if __name__ == "__main__":
         case 2 if argv[1] == "--config":
             edit_file(theme.RC_PATH)
 
+        case 2 if argv[1] == "--uninstall":
+            updater.run_uninstall_command()
+
         case 2:
             updater.check_for_updates_on_open()
             try:
