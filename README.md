@@ -13,8 +13,9 @@ usable as a general-purpose text editor for anything else.
 - Line-oriented commands: jump to a line, copy or delete a specific
   line by number, and paste a line at a given position.
 - Syntax highlighting for `.py` files: keywords, dunder names
-  (`__init__`, `__name__`, ...), built-in type names, and function
-  calls/definitions, each in its own color.
+  (`__init__`, `__name__`, ...), built-in type names, function
+  calls/definitions, and string literals (quotes included), each in
+  its own color.
 - Autocompletion for `.py` files, drawing from words already used in
   the file plus Python's keywords and built-ins, and, after `import`
   or `from`, standard library modules as well as `.py` files and
@@ -28,7 +29,10 @@ usable as a general-purpose text editor for anything else.
   assigned anywhere in it as `self.attr = ...`, found by working out
   which `class ...:` contains the cursor rather than looking for an
   assignment (there isn't one - `self` is a parameter, never assigned
-  itself). Beyond `self`, this only follows a single, literal
+  itself). A string literal works the same way with no assignment at
+  all: `"".up` (or `'x'.up`) offers `str`'s methods directly, since
+  the dot right after a closing quote already says what it is. Beyond
+  `self` and string literals, this only follows a single, literal
   `name = <expr>` line right before the cursor - no control flow, no
   return-type inference - and falls back to every builtin type's
   methods combined when nothing can be worked out. When
@@ -304,7 +308,7 @@ TEXT_COLOR=252
 LINE_NUMBER_COLOR=244
 CURRENT_LINE_INDICATOR_COLOR=214
 BRACKET_MATCH_COLOR=238
-KEYWORD_COLOR=33
+KEYWORD_COLOR=160
 DUNDER_COLOR=11
 TYPE_COLOR=2
 FUNCTION_COLOR=5
@@ -313,6 +317,7 @@ PLACEHOLDER_COLOR=244
 INACTIVE_TAB_COLOR=232
 RULER_COLOR=238
 LINE_LENGTH_ERROR_COLOR=196
+STRING_COLOR=117
 
 [dark]
 ...

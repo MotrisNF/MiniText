@@ -295,7 +295,9 @@ def _sanitize_run_output(text):
 def _highlight(display_text):
     def _colorize(match):
         token = match.group()
-        if token[0] in ("'", '"', "#"):
+        if token[0] in ("'", '"'):
+            return f"{theme.STRING_COLOR}{token}{theme.COLOR_RESET}"
+        if token[0] == "#":
             return token
         if token in keyword.kwlist:
             return f"{theme.KEYWORD_COLOR}{token}{theme.COLOR_RESET}"
@@ -1204,8 +1206,19 @@ class TextEditor:
             prefix_start > 0 and line[prefix_start - 1] == "."
         )
         if is_attribute:
-            name = self._preceding_identifier(prefix_start - 1)
-            inferred = self._infer_attribute_pool(name) if name else None
+            dot_index = prefix_start - 1
+            if (
+                dot_index > 0
+                and line[dot_index - 1] in ("'", '"')
+                and _is_inside_string_or_comment(line, dot_index - 1)
+            ):
+                # The dot follows a complete string literal directly
+                # (e.g. "".foo or 'x'.foo), not a named variable -
+                # str's own type is already fully known here.
+                inferred = set(TYPE_ATTRIBUTE_VOCABULARY["str"])
+            else:
+                name = self._preceding_identifier(dot_index)
+                inferred = self._infer_attribute_pool(name) if name else None
             if inferred is not None:
                 # The type/class is known, so "." alone (an empty
                 # prefix) already starts the suggestion - no need to
