@@ -61,32 +61,47 @@ bindir="${2:?usage: install.sh <libdir> <bindir>}"
 
 srcdir="$(cd "$(dirname "$0")" && pwd)"
 
-sources="main.py text_editor.py theme.py"
+if ! git -C "$srcdir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "install.sh must be run from inside the Mini git repository."
+  exit 1
+fi
 
-for source in $sources; do
-  if [ ! -f "$srcdir/$source" ]; then
-    echo "$source not found next to install.sh. Nothing to install."
-    exit 1
-  fi
-done
+remote_url="$(git -C "$srcdir" remote get-url origin 2>/dev/null || true)"
 
 mkdir -p "$libdir" "$bindir"
-for source in $sources; do
-  install -m 0644 "$srcdir/$source" "$libdir/$source"
-done
-echo "  Installed sources at $libdir"
+
+# A leftover from an older, copy-based install (no .git) gets replaced.
+if [ -d "$libdir/src" ] && [ ! -d "$libdir/src/.git" ]; then
+  rm -rf "$libdir/src"
+fi
+
+if [ -d "$libdir/src/.git" ]; then
+  git -C "$libdir/src" pull --ff-only --quiet
+  echo "  Updated existing install at $libdir/src"
+else
+  git clone --quiet "$srcdir" "$libdir/src"
+  if [ -n "$remote_url" ]; then
+    git -C "$libdir/src" remote set-url origin "$remote_url"
+  fi
+  echo "  Installed sources at $libdir/src"
+fi
+
+cat > "$libdir/env" <<EOF
+LIBDIR=$libdir
+BINDIR=$bindir
+EOF
 
 wrapper="$(mktemp)"
 cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
-exec python3 "$libdir/main.py" "\$@"
+exec python3 "$libdir/src/main.py" "\$@"
 EOF
 install -m 0755 "$wrapper" "$bindir/mini"
 rm -f "$wrapper"
 echo "  Installed at $bindir/mini"
 
 if [ ! -e "$HOME/.minirc" ]; then
-  python3 "$libdir/theme.py" > "$HOME/.minirc"
+  python3 "$libdir/src/theme.py" > "$HOME/.minirc"
   cp "$HOME/.minirc" "$HOME/.minirc.bak"
   echo "  Created $HOME/.minirc (base/dark/light themes, edit freely)"
 elif [ ! -e "$HOME/.minirc.bak" ]; then

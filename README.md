@@ -99,10 +99,25 @@ mini                # start with an empty, unnamed buffer
 mini path/to/file.py  # open a file (created on save if it doesn't exist)
 mini .               # open the worktree file explorer for a directory
 mini path/to/dir     # same, for a specific directory
+mini --version       # print the installed version
+mini --update        # check for updates and install them if found
 ```
 
-The editor starts in Visual mode. Press `Esc h` or type `:help` at any
-time to see the full command reference from inside the editor.
+The editor starts in Visual mode. Type `:help` at any time to see the
+full command reference from inside the editor.
+
+### Updating
+
+An installed Mini (via `make install`) checks once a day, the first
+time it's opened that day, whether the repository it was installed
+from has new commits - a silent, non-blocking check that never delays
+startup if there's no network. If it's behind, a one-line banner shows
+before the editor opens (dismissed by pressing any key) pointing you
+at `mini --update`, which pulls the latest changes and reinstalls
+automatically. Running `mini --update` directly always re-checks,
+regardless of when it last checked. This only works for a `make
+install`-created install, not for running `python3 main.py` straight
+from a checkout.
 
 ## Modes
 
@@ -120,8 +135,8 @@ time to see the full command reference from inside the editor.
 
 | Key                     | Action                                   |
 |--------------------------|-------------------------------------------|
-| Arrow keys, or `a`/`s`/`d`/`f` | Move left/up/down/right             |
-| A number, then a move key | Repeat that move that many times (`5f` moves right 5 times). The number stays active for further taps of a move key too - handy if it auto-repeats a digit and a movement key together - until you type a new number or press a non-movement key |
+| Arrow keys, or `h`/`j`/`k`/`l` | Move left/down/up/right             |
+| A number, then a move key | Repeat that move that many times (`5l` moves right 5 times). The number stays active for further taps of a move key too - handy if it auto-repeats a digit and a movement key together - until you type a new number or press a non-movement key |
 | `Ctrl` + arrow key        | Extend the selection while moving       |
 | `i`                       | Enter Insert mode                       |
 | `w`                       | Focus the worktree panel (shows it first if hidden) |
@@ -200,7 +215,9 @@ code above them instead of running under the panel.
 
 | Key            | Action                                                     |
 |----------------|---------------------------------------------------------------|
-| Up / Down      | Move the selection                                             |
+| Up / Down, or `j`/`k` | Move the selection                                      |
+| `l`            | Expand a directory                                             |
+| `h`            | Collapse a directory                                           |
 | Enter          | Open a file as a tab (switching to it if already open), or expand/collapse a directory |
 | Ctrl+F         | Create a new file (prompts for a name)                         |
 | Ctrl+D         | Create a new directory (prompts for a name)                    |
@@ -282,8 +299,10 @@ never prevents the editor from starting.
 | `main.py`       | Command-line entry point                                    |
 | `text_editor.py`| The editor itself: terminal handling, rendering, key handling, editing commands, and the worktree explorer |
 | `theme.py`      | Loads and validates `~/.minirc`, and resolves the active theme into ANSI color codes |
+| `updater.py`    | `mini --update` and the once-a-day update check on startup    |
 | `install.sh`    | Installs or uninstalls Mini and its default configuration    |
 | `Makefile`      | `make install` / `make uninstall` wrappers around `install.sh` |
+| `VERSION`       | Current version, printed by `mini --version`                 |
 
 ## Limitations
 

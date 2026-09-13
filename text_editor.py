@@ -20,7 +20,7 @@ PAIRS = {"(": ")", "[": "]", "{": "}", "'": "'", '"': '"'}
 BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
 CLOSING_TO_OPENING = {value: key for key, value in BRACKET_PAIRS.items()}
 QUOTE_CHARACTERS = {"'", '"'}
-ASDF_TO_ARROW = {"a": "LEFT", "s": "UP", "d": "DOWN", "f": "RIGHT"}
+HJKL_TO_ARROW = {"h": "LEFT", "j": "DOWN", "k": "UP", "l": "RIGHT"}
 MOVEMENT_KEYS = {
     "UP", "DOWN", "LEFT", "RIGHT",
     "CTRL-UP", "CTRL-DOWN", "CTRL-LEFT", "CTRL-RIGHT",
@@ -261,7 +261,6 @@ class TextEditor:
         self.status = ""
         self.running = True
         self.help_mode = False
-        self.help_pending = False
         self.viewport_top = 0
         self.selection_anchor = None
         self.clipboard = None
@@ -492,7 +491,6 @@ class TextEditor:
             theme.BASE_STYLE,
             f"File: {file_name}\r\n\r\n",
             "Available commands:\r\n",
-            "  Esc h    Show this help\r\n",
             "  :help    Show this help\r\n",
             "  i        Enter Insert mode\r\n",
             "  Tab      Accept suggestion (Insert mode)\r\n",
@@ -502,14 +500,15 @@ class TextEditor:
             "  :run     Run this .py file, output shown below the code\r\n",
             "           (Ctrl+C interrupts it, Esc unfocuses/closes it,\r\n",
             "           typing sends input to it)\r\n",
-            "  Worktree: Up/Down move, Enter opens a file as a tab\r\n",
+            "  Worktree: Up/Down or j/k move, l expands a directory,\r\n",
+            "    h collapses it, Enter opens a file as a tab\r\n",
             "    (or switches to it if already open) or\r\n",
             "    expands/collapses a directory. Ctrl+F new file,\r\n",
             "    Ctrl+D new folder, Del deletes, v/Esc return focus,\r\n",
             "    : or i jump to Command/Insert\r\n",
             "  Tab      Switch to the next tab (Visual mode)\r\n",
             "  Shift+Tab  Switch to the previous tab (Visual mode)\r\n",
-            "  a s d f  Move left/up/down/right (Visual mode)\r\n",
+            "  h j k l  Move left/down/up/right (Visual mode)\r\n",
             "  <n> then a move   Repeat that move n times (Visual)\r\n",
             "  :l <n>   Jump to line n\r\n",
             "  :b       Jump to the beginning of the file\r\n",
@@ -1294,17 +1293,31 @@ class TextEditor:
                 return index
         return None
 
+    def _worktree_expand(self, entries):
+        if not entries:
+            return
+        path, _, is_directory, _ = entries[self.worktree_cursor]
+        if is_directory and path not in self.worktree_expanded:
+            self.worktree_expanded.add(path)
+            self.worktree_selected_dir = path
+
+    def _worktree_collapse(self, entries):
+        if not entries:
+            return
+        path, _, is_directory, _ = entries[self.worktree_cursor]
+        if is_directory and path in self.worktree_expanded:
+            self.worktree_expanded.discard(path)
+            self.worktree_selected_dir = os.path.dirname(path)
+
     def _worktree_activate(self, entries):
         if not entries:
             return
         path, _, is_directory, _ = entries[self.worktree_cursor]
         if is_directory:
             if path in self.worktree_expanded:
-                self.worktree_expanded.discard(path)
-                self.worktree_selected_dir = os.path.dirname(path)
+                self._worktree_collapse(entries)
             else:
-                self.worktree_expanded.add(path)
-                self.worktree_selected_dir = path
+                self._worktree_expand(entries)
             return
         existing_tab = self._find_tab_for_path(path)
         if existing_tab is not None:
@@ -1627,14 +1640,18 @@ class TextEditor:
                         continue
                     if self.worktree_focused:
                         entries = self._worktree_entries()
-                        if key == "UP":
+                        if key in ("UP", "k"):
                             self.worktree_cursor = max(
                                 0, self.worktree_cursor - 1
                             )
-                        elif key == "DOWN":
+                        elif key in ("DOWN", "j"):
                             self.worktree_cursor = min(
                                 len(entries) - 1, self.worktree_cursor + 1
                             )
+                        elif key == "l":
+                            self._worktree_expand(entries)
+                        elif key == "h":
+                            self._worktree_collapse(entries)
                         elif key in ("\r", "\n"):
                             self._worktree_activate(entries)
                         elif key == "\x06":
@@ -1661,7 +1678,6 @@ class TextEditor:
                         elif key == ESC:
                             self.command = None
                             self.mode = "visual"
-                            self.help_pending = True
                         elif len(key) == 1 and key.isprintable():
                             self.command += key
                         continue
@@ -1673,19 +1689,12 @@ class TextEditor:
                         elif key == ESC:
                             self.search_query = None
                             self.mode = "visual"
-                            self.help_pending = True
                         elif len(key) == 1 and key.isprintable():
                             self.search_query += key
                         continue
 
-                    if self.help_pending:
-                        self.help_pending = False
-                        if key == "h":
-                            self.help_mode = True
-                            continue
-
-                    if self.mode == "visual" and key in ASDF_TO_ARROW:
-                        key = ASDF_TO_ARROW[key]
+                    if self.mode == "visual" and key in HJKL_TO_ARROW:
+                        key = HJKL_TO_ARROW[key]
                     if self.mode == "visual" and key.isdigit():
                         if self.count_locked:
                             self.pending_count = key
@@ -1700,7 +1709,6 @@ class TextEditor:
                     if key == ESC:
                         self.mode = "visual"
                         self.command = None
-                        self.help_pending = True
                         self.selection_anchor = None
                     elif self.mode == "visual" and key == ":":
                         self.mode = "command"
