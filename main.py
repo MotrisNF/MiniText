@@ -1,6 +1,7 @@
 import os
 from sys import argv
 
+import theme
 import updater
 from text_editor import edit_file
 
@@ -27,6 +28,9 @@ if __name__ == "__main__":
 
         case 2 if argv[1] == "--version":
             print(f"mini {_read_version()}")
+
+        case 2 if argv[1] == "--config":
+            edit_file(theme.RC_PATH)
 
         case 2:
             updater.check_for_updates_on_open()

@@ -492,6 +492,7 @@ class TextEditor:
             f"File: {file_name}\r\n\r\n",
             "Available commands:\r\n",
             "  :help    Show this help\r\n",
+            "  :config  Open ~/.minirc as a tab\r\n",
             "  i        Enter Insert mode\r\n",
             "  Tab      Accept suggestion (Insert mode)\r\n",
             "  Ctrl+Arrows  Select text (Visual mode)\r\n",
@@ -1293,6 +1294,16 @@ class TextEditor:
                 return index
         return None
 
+    def _open_config_file(self):
+        path = theme.RC_PATH
+        existing_tab = self._find_tab_for_path(path)
+        if existing_tab is not None:
+            self._switch_to_tab(existing_tab)
+        elif self.file_name is None and self.lines == [""] and not self.modified:
+            self._load_file(path)
+        else:
+            self._open_in_new_tab(path)
+
     def _worktree_expand(self, entries):
         if not entries:
             return
@@ -1594,6 +1605,8 @@ class TextEditor:
             self._start_run()
         elif name == "help" and argument is None:
             self.help_mode = True
+        elif name == "config" and argument is None:
+            self._open_config_file()
         else:
             self.status = f"Unknown command: :{command}"
 
