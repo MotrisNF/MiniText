@@ -5,6 +5,33 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.4.1 - 2026-09-14
+
+- Fixed `Enter` accepting the highlighted entry of an open suggestion
+  dropdown instead of inserting a newline - so finishing a perfectly
+  valid, complete line that still happened to have 2+ matches open
+  (`import re` also matches `reprlib`/`readline`/`resource`) no
+  longer silently rewrites what you already typed the moment you
+  press Enter to move on. `Enter` now always inserts a newline,
+  dropdown or not; `Tab` remains the way to accept a suggestion.
+- Fixed C/C++ `#include` completion inserting a duplicated, broken
+  filename once a header name's own `.` had been typed (accepting
+  `foo.h` after typing `foo.` produced `foo.foo.h`): ghost text and
+  Tab-accept measured "what's already typed" using the same word-only
+  scan as ordinary code completion, which stops at a `.` - a header
+  name almost always has one. They now use the real text since the
+  opening quote/bracket in this context instead.
+- `#include <...>` (a system header) now waits for 2 typed characters
+  before searching, the same as ordinary word completion - it used to
+  search as soon as `<` was typed, filtering every header name in
+  every one of the compiler's own include directories (easily
+  thousands) on each keystroke, which could visibly lag. A local
+  `#include "..."` is unaffected - too few candidates for this to
+  matter, and being instant there mirrors Python's own local-module
+  completion after `import`/`from`.
+
+## 1.4.0 - 2026-09-14
+
 - The startup update check now actually offers to update, instead of
   just pointing at `mini --update`: finding a newer commit prompts
   "Update now? (y/n)" right there (before the editor opens, so
@@ -51,6 +78,9 @@ matches `VERSION` (what `mini --version` prints).
   `init_`, ...) with practically anything, this made header-declared
   names rarely surface at all. Both pools are now merged before
   matching.
+
+## 1.3.0 - 2026-09-14
+
 - A Python `import`/`from ... import ...` line that would actually
   fail now gets the same `●` marker as an overly long line, checked
   for real in an isolated subprocess (the same way `from X import`
@@ -60,6 +90,9 @@ matches `VERSION` (what `mini --version` prints).
   only installed in the project's virtualenv isn't wrongly flagged.
   A plain top-level standard-library import is trusted without
   spawning anything.
+
+## 1.2.5 - 2026-09-14
+
 - An `#include` that doesn't actually resolve (a local header not
   found next to the file, or a system one not found in the
   compiler's own include directories) now gets the same `●` marker
@@ -67,6 +100,9 @@ matches `VERSION` (what `mini --version` prints).
   Never shown for a `<...>` include with no `gcc`/`clang`/`cc` on
   `PATH` at all, for the same reason `#include <...>` completion
   itself already stays silent then.
+
+## 1.2.4 - 2026-09-14
+
 - Fixed C/C++ completion not looking inside a file's own `#include`s:
   a name declared in a locally-included header (`#include "mine.h"`)
   or a real system one (`#include <stdio.h>`) is now actually offered
@@ -74,16 +110,25 @@ matches `VERSION` (what `mini --version` prints).
   only ever offered header *names*, never what's declared inside
   them. Each header is read and word-scanned the same way the
   buffer's own words already are, cached for the rest of the session.
-  colored as comments (`COMMENT_COLOR`) instead of as regular
-  strings, matching how they're actually used - a docstring - far
-  more often than not. Same single-line-only reach as everything
-  else here: one that doesn't close on the line it starts isn't
-  colored at all, same as before.
+
+## 1.2.3 - 2026-09-14
+
 - Fixed quote-matching splitting a docstring's coloring apart when
   the cursor landed on one of its own three-quote delimiters (it has
   no notion of a triple-quote as one unit, so it would pair up two
   of the docstring's own quote characters instead) - it now leaves a
   same-line triple-quoted string alone entirely.
+
+## 1.2.2 - 2026-09-14
+
+- Triple-quoted Python strings (`"""..."""`/`'''...'''`) are now
+  colored as comments (`COMMENT_COLOR`) instead of as regular
+  strings, matching how they're actually used - a docstring - far
+  more often than not. Same single-line-only reach as everything
+  else here: one that doesn't close on the line it starts isn't
+  colored at all, same as before.
+
+## 1.2.1 - 2026-09-14
 
 - Fixed a real display bug: a line longer than the terminal's width
   used to overflow into the next screen row at column 1 (the
@@ -98,6 +143,8 @@ matches `VERSION` (what `mini --version` prints).
   sharing the plain text color, for both Python's `#` and C/C++'s
   `//` and `/* */`.
 
+## 1.2.0 - 2026-09-14
+
 - Added syntax highlighting and autocompletion for C (`.c`/`.h`) and
   C++ (`.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx`): keywords, built-in
   type names, preprocessor directives, and string/char literals
@@ -108,6 +155,8 @@ matches `VERSION` (what `mini --version` prints).
   edited; `#include <...>` completes real system header names, found
   by asking the actual `gcc`/`clang`/`cc` on `PATH` for its include
   search directories.
+
+## 1.1.7 - 2026-09-14
 
 - Performance: fixed two remaining sources of Insert-mode lag on
   large files. Autocompletion's buffer-word matching now uses binary
@@ -122,12 +171,17 @@ matches `VERSION` (what `mini --version` prints).
   the help screen, or the suggestion dropdown appearing/closing still
   triggers one full redraw, to never leave stale content on screen.
 
+## 1.1.6 - 2026-09-14
+
 - The update check now runs at most once every 4 hours instead of
   once a day. A session that stays open past that mark keeps checking
   in the background on the same schedule for as long as it's open,
   opening a new tab to announce an update if it finds one - previously
   only the check that ran once before the editor opened could ever
   notice.
+
+## 1.1.5 - 2026-09-14
+
 - Internal: split the single ~2600-line `text_editor.py` into
   focused modules by concern (`rendering.py`, `editing.py`,
   `commands.py`, `tabs.py`, `worktree.py`, `run_panel.py`,
@@ -135,6 +189,9 @@ matches `VERSION` (what `mini --version` prints).
   `terminal.py`), composed back together as mixins on the
   `TextEditor` class in a much smaller `text_editor.py`. No behavior
   change - see the "Project structure" table in the README.
+
+## 1.1.3 - 2026-09-14
+
 - Added `Ctrl+H` in the worktree panel, toggling whether hidden
   files/directories (name starting with `.`) are shown - hidden by
   default, at every depth.
@@ -155,10 +212,16 @@ matches `VERSION` (what `mini --version` prints).
   invisible in-code default, never actually appearing in the file.
 - The installer now also adds `~/.local/bin` to `~/.hellishrc`'s
   `PATH` (if present), alongside `~/.bashrc`/`~/.zshrc`/`~/.profile`.
+
+## 1.1.2 - 2026-09-14
+
 - Added `:cmd <text>`, running `text` as a `bash -c` command in the
   same output panel as `:run`/`:lint` (Ctrl+C, scrolling, and all).
   Unlike `:run`/`:lint`, it never forces a save of the current buffer
   and doesn't require it to have a file at all.
+
+## 1.1.1 - 2026-09-14
+
 - The `:run`/`:lint` output panel can now be scrolled independently of
   the live output (`Up`/`Down` a line at a time, `Ctrl+Up`/`Ctrl+Down`
   a page at a time) instead of only ever showing the tail end, and it

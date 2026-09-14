@@ -244,7 +244,7 @@ class TextEditor(
                         self.suggestion_index = (
                             self.suggestion_index + 1
                         ) % len(self.suggestion_matches)
-                    elif dropdown_open and key in ("\t", "\r", "\n"):
+                    elif dropdown_open and key == "\t":
                         self._accept_highlighted_suggestion()
                     elif dropdown_open and key == ESC:
                         self.suggestion_matches = []

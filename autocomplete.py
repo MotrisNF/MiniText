@@ -1029,12 +1029,26 @@ class SuggestionMixin:
             already_typed = line[include_match.end():self.column]
             if closing in already_typed:
                 return []
-            headers = (
-                _system_header_names(language == "cpp") if opening == "<"
-                else self._local_header_names()
-            )
+            if opening == "<":
+                # A system include searches every one of the
+                # compiler's own include directories - easily
+                # thousands of header names - so, unlike a local
+                # "..." include (few files, right next to the one
+                # being edited), it waits for a couple of real
+                # characters first, the same as ordinary word
+                # completion, instead of filtering the whole list on
+                # every keystroke starting from zero.
+                if len(already_typed) < MIN_SUGGESTION_PREFIX:
+                    return []
+                headers = _system_header_names(language == "cpp")
+            else:
+                headers = self._local_header_names()
             return sorted(
-                (name for name in headers if name.startswith(already_typed)),
+                (
+                    name for name in headers
+                    if name != already_typed
+                    and name.startswith(already_typed)
+                ),
                 key=len,
             )
         if _is_inside_c_string_or_comment(line, self.column):
@@ -1075,10 +1089,31 @@ class SuggestionMixin:
             self.suggestion_index = 0
         self.suggestion_matches = matches
 
+    def _active_suggestion_prefix(self):
+        """The prefix actually consumed by the current suggestion
+        list - almost always `_current_word_prefix()` (word
+        characters immediately before the cursor), except inside a
+        C/C++ `#include "..."`/`<...>` filename: a real header name
+        routinely contains a `.` or `/`, neither of which counts as a
+        "word" character, so the word-based prefix would stop short
+        of what's actually been typed (e.g. only "h" of "foo.h").
+        Ghost text and Tab-accept both need the real, full amount
+        already there - the same `already_typed` the matches
+        themselves were filtered by - or they end up keeping the part
+        the word-based prefix missed and inserting the whole matched
+        name again on top of it (`foo.` + accepting "foo.h" becoming
+        "foo.foo.h")."""
+        if language_for(self.file_name) in ("c", "cpp"):
+            line = self.lines[self.line]
+            include_match = _INCLUDE_PATTERN.match(line[:self.column])
+            if include_match:
+                return line[include_match.end():self.column]
+        return self._current_word_prefix()
+
     def _ghost_suggestion(self):
         if len(self.suggestion_matches) != 1:
             return ""
-        prefix = self._current_word_prefix()
+        prefix = self._active_suggestion_prefix()
         return self.suggestion_matches[0][len(prefix):]
 
     def _suggestion_dropdown_output(
@@ -1087,7 +1122,7 @@ class SuggestionMixin:
         items = self.suggestion_matches[:MAX_SUGGESTION_DROPDOWN_ITEMS]
         if len(items) < 2:
             return []
-        prefix_length = len(self._current_word_prefix())
+        prefix_length = len(self._active_suggestion_prefix())
         box_width = min(
             max(len(word) for word in items) + 2,
             max(1, terminal_width - 1),
@@ -1123,7 +1158,7 @@ class SuggestionMixin:
         self.column += len(suggestion)
 
     def _accept_highlighted_suggestion(self):
-        prefix = self._current_word_prefix()
+        prefix = self._active_suggestion_prefix()
         word = self.suggestion_matches[self.suggestion_index]
         self._accept_suggestion(word[len(prefix):])
         self.suggestion_matches = []

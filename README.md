@@ -67,9 +67,13 @@ usable as a general-purpose text editor for anything else.
   short-lived subprocess, so this also works for your own local
   files, not just the standard library. A single match shows as
   inline "ghost text" (`Tab` accepts it); two or more open a dropdown
-  below the cursor - `Up`/`Down` move through it, `Tab` or `Enter`
-  accepts the highlighted entry, `Esc` dismisses it without leaving
-  Insert mode. A module's names starting with a single underscore are
+  below the cursor - `Up`/`Down` move through it, `Tab` accepts the
+  highlighted entry, `Esc` dismisses it without leaving Insert mode.
+  `Enter` always inserts a newline, dropdown or not - it never doubles
+  as an accept key, so finishing a line that happens to still have a
+  dropdown open (`import re` matches `reprlib`/`readline`/... too)
+  never silently rewrites what you already typed. A module's names
+  starting with a single underscore are
   offered too (only `__dunder__` names are hidden), since a small
   local file's real API is often just that. Suggestions never trigger
   inside a string or a comment, so typing free-form text there doesn't
@@ -300,7 +304,7 @@ never know existed.
 | Key         | Action                                                    |
 |-------------|------------------------------------------------------------|
 | `Tab`       | Accept the current autocompletion suggestion, if any (otherwise inserts a tab) |
-| `Enter`     | New line, auto-indented - or, while a suggestion dropdown is open, accepts the highlighted entry instead |
+| `Enter`     | New line, auto-indented - always, even while a suggestion dropdown is open (use `Tab` to accept a suggestion instead) |
 | `Up` / `Down` | Move the cursor - or, while a suggestion dropdown is open, move the highlighted entry instead |
 | Backspace   | Delete backward; also removes an auto-closed bracket/quote pair if nothing was typed inside it |
 | Delete      | Delete forward (the character under the cursor)            |
