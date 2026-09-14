@@ -14,9 +14,9 @@ usable as a general-purpose text editor for anything else.
   line by number, and paste a line at a given position.
 - Syntax highlighting for `.py` files: keywords, dunder names
   (`__init__`, `__name__`, ...), built-in type names, function
-  calls/definitions, and string literals (quotes included), each in
-  its own color. `def` and `class` get a color of their own, separate
-  from the rest of the keywords.
+  calls/definitions, string literals (quotes included), and comments,
+  each in its own color. `def` and `class` get a color of their own,
+  separate from the rest of the keywords.
 - Autocompletion for `.py` files, drawing from words already used in
   the file plus Python's keywords and built-ins, and, after `import`
   or `from`, standard library modules as well as `.py` files and
@@ -62,7 +62,8 @@ usable as a general-purpose text editor for anything else.
 - Syntax highlighting and autocompletion for `.c`/`.h` and
   `.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files too, in the same style
   as `.py` - keywords, built-in type names, preprocessor directives,
-  and string/char literals colored, plus word-based completion from
+  string/char literals, and comments (both `//` and `/* */` - the
+  same in C and C++) colored, plus word-based completion from
   the buffer and C's (or C++'s, with its own extra keywords like
   `class`/`namespace`/`template`) own vocabulary as a fallback. This
   is deliberately much shallower than the Python side: no type
@@ -109,6 +110,16 @@ usable as a general-purpose text editor for anything else.
 - A configurable line-length ruler (`MAX_COLS`, default 79 - flake8's
   own default) drawn on every line that doesn't already reach it;
   going past it anyway marks that line with a `●` in the gutter.
+- A line too long for the terminal's width soft-wraps onto as many
+  extra screen rows as it takes, instead of overflowing into the next
+  row at column 1 (the terminal's own doing, not Mini's, and the
+  usual way this looks broken) or getting cut off. A continuation
+  row's gutter area is left blank rather than repeating the line
+  number, so the text still starts right where a first row's text
+  would - visibly still the same line, continued. This is purely
+  about fitting on screen: moving with the arrow keys, search, and
+  everything else still works a line at a time, not a screen-row at a
+  time.
 - A theme system with three built-in palettes (`base`, `dark`,
   `light`), fully configurable through a plain-text config file, with
   an automatic backup that protects against invalid edits.
@@ -399,6 +410,7 @@ RULER_COLOR=238
 LINE_LENGTH_ERROR_COLOR=196
 STRING_COLOR=117
 DECLARATION_COLOR=203
+COMMENT_COLOR=108
 
 [dark]
 ...
@@ -516,6 +528,14 @@ Mini is intentionally small. Some notable limitations:
   as the same 4 columns used everywhere else in Mini), while flake8's
   own E501 counts raw characters (a tab is 1) - the two only disagree
   when a line mixes tabs with long content, which is rare.
+- A soft-wrapped line's `MAX_COLS` ruler is positioned assuming it
+  falls within the first screen row of that line, which is normally
+  true (`MAX_COLS` is usually smaller than a terminal's width) but
+  could land oddly on an unusually narrow terminal. A single line
+  that alone takes more screen rows than the whole editor area is
+  tall still shows the cursor's own row correctly, but earlier rows
+  of that same line scroll out of view above it rather than the view
+  shrinking to show all of it at once.
 - Virtualenv detection for `:run`/`:lint` only recognizes the Unix
   `bin/python3` (or `bin/python`) layout, matching Mini's own
   Linux/Unix-only reach - and treats a directory literally named

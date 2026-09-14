@@ -19,6 +19,30 @@ def _no_highlight(text, lookahead=""):
     return text
 
 
+def _wrap_points(text, content_width):
+    """Raw string indices where `text` should be split so each
+    resulting piece's *display* width (tabs expanded to TAB_SIZE
+    columns) fits within `content_width` - always at least one
+    split point at 0 and one at len(text), even for an empty line or
+    one that already fits with no wrapping needed at all."""
+    if content_width <= 0:
+        return [0, len(text)]
+    points = [0]
+    display_column = 0
+    for index, character in enumerate(text):
+        char_width = theme.TAB_SIZE if character == "\t" else 1
+        if display_column + char_width > content_width and display_column > 0:
+            points.append(index)
+            display_column = 0
+        display_column += char_width
+    points.append(len(text))
+    return points
+
+
+def _line_row_count(text, content_width):
+    return len(_wrap_points(text, content_width)) - 1
+
+
 class RenderMixin:
 
     def _tab_bar_line(self):
@@ -44,9 +68,6 @@ class RenderMixin:
     @staticmethod
     def _display_text(text):
         return text.replace("\t", " " * theme.TAB_SIZE)
-
-    def _display_column(self):
-        return len(self._display_text(self.lines[self.line][:self.column]))
 
     def _matching_bracket_position(self):
         line = self.lines[self.line]
@@ -138,6 +159,63 @@ class RenderMixin:
                 + apply_highlight(self._display_text(after))
             )
         return apply_highlight(self._display_text(text_segment))
+
+    def _render_wrapped_segment(
+        self, text, seg_start, seg_end, is_last_segment, is_current_line,
+        selection_range, bracket_column, apply_highlight, suggestion,
+    ):
+        """One wrap row's worth of colored/escaped content for
+        `text[seg_start:seg_end]` - the same selection/suggestion/
+        bracket handling a whole unwrapped line gets, just scoped to
+        this one segment. Always in absolute, whole-line column
+        coordinates throughout (what _render_segment and
+        bracket_column already use), never segment-local ones. With
+        only one segment covering the whole line (the common,
+        unwrapped case), this produces exactly what the old
+        single-segment code did."""
+        if is_last_segment:
+            cursor_in_segment = seg_start <= self.column <= seg_end
+        else:
+            cursor_in_segment = seg_start <= self.column < seg_end
+        if is_current_line and suggestion and cursor_in_segment:
+            return (
+                self._render_segment(
+                    text[seg_start:self.column], seg_start, bracket_column,
+                    apply_highlight,
+                )
+                + theme.SUGGESTION_COLOR
+                + self._display_text(suggestion)
+                + theme.SUGGESTION_RESET
+                + self._render_segment(
+                    text[self.column:seg_end], self.column, bracket_column,
+                    apply_highlight,
+                )
+            )
+        if selection_range is not None:
+            sel_start, sel_end = selection_range
+            clipped_start = max(sel_start, seg_start)
+            clipped_end = min(sel_end, seg_end)
+            if clipped_start < clipped_end:
+                return (
+                    self._render_segment(
+                        text[seg_start:clipped_start], seg_start,
+                        bracket_column, apply_highlight,
+                    )
+                    + theme.SELECTION_START
+                    + self._render_segment(
+                        text[clipped_start:clipped_end], clipped_start,
+                        bracket_column, apply_highlight,
+                    )
+                    + theme.SELECTION_END
+                    + self._render_segment(
+                        text[clipped_end:seg_end], clipped_end,
+                        bracket_column, apply_highlight,
+                    )
+                )
+        return self._render_segment(
+            text[seg_start:seg_end], seg_start, bracket_column,
+            apply_highlight,
+        )
 
     def _render_help(self):
         file_name = self.file_name or "[no name]"
@@ -235,10 +313,28 @@ class RenderMixin:
             run_max_start if self.run_view_start is None
             else min(self.run_view_start, run_max_start)
         )
-        self._ensure_cursor_visible(editor_rows)
-        last_visible_line = min(
-            len(self.lines), self.viewport_top + editor_rows
+        show_number = theme.SHOW_NUMBER_LINE
+        show_indicator = theme.SHOW_LINE_INDICATOR
+        gutter_width = (3 if show_indicator else 0) + (
+            number_width + 1 if show_number else 0
         )
+        sidebar_visible = self.worktree_visible and terminal_width >= (
+            WORKTREE_WIDTH + WORKTREE_SEPARATOR_WIDTH + MIN_EDITOR_WIDTH
+        )
+        editor_col_offset = (
+            WORKTREE_WIDTH + WORKTREE_SEPARATOR_WIDTH if sidebar_visible
+            else 0
+        )
+        # How many columns are actually left for a line's own text,
+        # after the sidebar (if shown) and the gutter (line number/
+        # current-line marker) - a line that doesn't fit soft-wraps
+        # onto more than one screen row instead of either overflowing
+        # into the next row at column 1 (the terminal's own doing, not
+        # Mini's) or getting cut off.
+        content_width = max(
+            1, terminal_width - editor_col_offset - gutter_width
+        )
+        self._ensure_cursor_visible(editor_rows, content_width)
         selection_bounds = self._selection_bounds()
         self._refresh_suggestion_matches()
         suggestion = self._ghost_suggestion()
@@ -252,18 +348,30 @@ class RenderMixin:
             apply_highlight = functools.partial(_highlight_c, cpp=True)
         else:
             apply_highlight = _no_highlight
-        show_number = theme.SHOW_NUMBER_LINE
-        show_indicator = theme.SHOW_LINE_INDICATOR
-        gutter_width = (3 if show_indicator else 0) + (
-            number_width + 1 if show_number else 0
-        )
-        sidebar_visible = self.worktree_visible and terminal_width >= (
-            WORKTREE_WIDTH + WORKTREE_SEPARATOR_WIDTH + MIN_EDITOR_WIDTH
-        )
-        editor_col_offset = (
-            WORKTREE_WIDTH + WORKTREE_SEPARATOR_WIDTH if sidebar_visible
-            else 0
-        )
+
+        # Wrap rows for however many lines, starting at viewport_top,
+        # fit in editor_rows - each entry is one screen row's worth of
+        # one line's text (line_index, seg_start, seg_end, is_first,
+        # is_last); a line short enough not to wrap is just one entry
+        # covering the whole thing.
+        row_descriptors = []
+        wrap_line_index = self.viewport_top
+        ran_out_of_lines = False
+        while len(row_descriptors) < editor_rows:
+            if wrap_line_index >= len(self.lines):
+                ran_out_of_lines = True
+                break
+            points = _wrap_points(self.lines[wrap_line_index], content_width)
+            segment_count = len(points) - 1
+            for segment_index in range(segment_count):
+                row_descriptors.append((
+                    wrap_line_index, points[segment_index],
+                    points[segment_index + 1], segment_index == 0,
+                    segment_index == segment_count - 1,
+                ))
+                if len(row_descriptors) >= editor_rows:
+                    break
+            wrap_line_index += 1
         sidebar_lines = (
             self._worktree_body_lines(visible_rows) if sidebar_visible
             else []
@@ -339,28 +447,39 @@ class RenderMixin:
                     )
                 else:
                     editor_row = ""
-            elif (
-                index := self.viewport_top + row_offset
-            ) < last_visible_line:
+            elif row_offset < len(row_descriptors):
+                (
+                    index, seg_start, seg_end, is_first_segment,
+                    is_last_segment,
+                ) = row_descriptors[row_offset]
                 text = self.lines[index]
                 is_current_line = index == self.line
-                if not show_indicator:
-                    marker = ""
-                elif is_current_line:
-                    marker = (
-                        f"{theme.CURRENT_LINE_INDICATOR_COLOR}"
-                        f"->{theme.COLOR_RESET} "
-                    )
+                if is_first_segment:
+                    if not show_indicator:
+                        marker = ""
+                    elif is_current_line:
+                        marker = (
+                            f"{theme.CURRENT_LINE_INDICATOR_COLOR}"
+                            f"->{theme.COLOR_RESET} "
+                        )
+                    else:
+                        marker = "   "
+                    if show_number:
+                        number = (
+                            f"{theme.LINE_NUMBER_COLOR}"
+                            f"{index + 1:>{number_width}}"
+                            f"{theme.COLOR_RESET} "
+                        )
+                    else:
+                        number = ""
                 else:
-                    marker = "   "
-                if show_number:
-                    number = (
-                        f"{theme.LINE_NUMBER_COLOR}"
-                        f"{index + 1:>{number_width}}"
-                        f"{theme.COLOR_RESET} "
-                    )
-                else:
-                    number = ""
+                    # A wrapped line's continuation row: no marker or
+                    # number of its own, but padded to the exact same
+                    # width so the text still starts right where a
+                    # first-segment row's text would - not back at
+                    # column 1, which is what made this look broken.
+                    marker = "   " if show_indicator else ""
+                    number = " " * (number_width + 1) if show_number else ""
                 selection_range = self._selection_range_for_line(
                     index, selection_bounds
                 )
@@ -369,66 +488,39 @@ class RenderMixin:
                     if bracket_match and bracket_match[0] == index
                     else None
                 )
-                if is_current_line and suggestion:
-                    displayed = (
-                        self._render_segment(
-                            text[:self.column], 0, bracket_column,
-                            apply_highlight,
-                        )
-                        + theme.SUGGESTION_COLOR
-                        + self._display_text(suggestion)
-                        + theme.SUGGESTION_RESET
-                        + self._render_segment(
-                            text[self.column:], self.column,
-                            bracket_column, apply_highlight,
-                        )
-                    )
-                elif selection_range is None:
-                    displayed = self._render_segment(
-                        text, 0, bracket_column, apply_highlight
-                    )
-                else:
-                    start, end = selection_range
-                    displayed = (
-                        self._render_segment(
-                            text[:start], 0, bracket_column,
-                            apply_highlight,
-                        )
-                        + theme.SELECTION_START
-                        + self._render_segment(
-                            text[start:end], start, bracket_column,
-                            apply_highlight,
-                        )
-                        + theme.SELECTION_END
-                        + self._render_segment(
-                            text[end:], end, bracket_column,
-                            apply_highlight,
-                        )
-                    )
+                displayed = self._render_wrapped_segment(
+                    text, seg_start, seg_end, is_last_segment,
+                    is_current_line, selection_range, bracket_column,
+                    apply_highlight, suggestion,
+                )
                 editor_row = f"{marker}{number}{displayed}"
-                display_length = len(self._display_text(text))
-                if display_length > theme.MAX_COLS:
-                    error_column = editor_col_offset + 1
-                    ruler_overlay.append(
-                        f"\x1b[{2 + row_offset};{error_column}H"
-                        f"{theme.LINE_LENGTH_ERROR_COLOR}●"
-                        f"{theme.BASE_STYLE}"
-                    )
-                else:
-                    ruler_column = (
-                        editor_col_offset + gutter_width + 1
-                        + theme.MAX_COLS
-                    )
-                    if ruler_column <= terminal_width:
+                if is_first_segment:
+                    display_length = len(self._display_text(text))
+                    if display_length > theme.MAX_COLS:
+                        error_column = editor_col_offset + 1
                         ruler_overlay.append(
-                            f"\x1b[{2 + row_offset};{ruler_column}H"
-                            f"{theme.RULER_COLOR}│{theme.BASE_STYLE}"
+                            f"\x1b[{2 + row_offset};{error_column}H"
+                            f"{theme.LINE_LENGTH_ERROR_COLOR}●"
+                            f"{theme.BASE_STYLE}"
                         )
-            elif index == last_visible_line and show_number:
+                    else:
+                        ruler_column = (
+                            editor_col_offset + gutter_width + 1
+                            + theme.MAX_COLS
+                        )
+                        if ruler_column <= terminal_width:
+                            ruler_overlay.append(
+                                f"\x1b[{2 + row_offset};{ruler_column}H"
+                                f"{theme.RULER_COLOR}│{theme.BASE_STYLE}"
+                            )
+            elif (
+                row_offset == len(row_descriptors)
+                and ran_out_of_lines and show_number
+            ):
                 placeholder_prefix = "   " if show_indicator else ""
                 editor_row = (
                     f"{theme.PLACEHOLDER_COLOR}{placeholder_prefix}"
-                    f"{last_visible_line + 1:>{number_width}} "
+                    f"{len(self.lines) + 1:>{number_width}} "
                     f"{theme.PLACEHOLDER_RESET}"
                 )
             else:
@@ -478,10 +570,35 @@ class RenderMixin:
                 editor_col_offset + len(self.run_pending_text) + 1
             )
         elif self.command is None and self.search_query is None:
-            cursor_row = self.line - self.viewport_top + 2
+            # Which wrap row the cursor's own line/column falls on -
+            # normally the only (or first) row for that line; keeps
+            # scanning past an exact-but-wrong-boundary match so a
+            # cursor sitting right at a wrap point lands at the start
+            # of the next row rather than the end of the previous one.
+            cursor_row_offset = None
+            cursor_seg_start = 0
+            for offset, descriptor in enumerate(row_descriptors):
+                idx, seg_start, seg_end, _, is_last = descriptor
+                if idx != self.line:
+                    continue
+                cursor_row_offset = offset
+                cursor_seg_start = seg_start
+                if self.column < seg_end or (
+                    is_last and self.column <= seg_end
+                ):
+                    break
+            if cursor_row_offset is None:
+                # The cursor's own line got cut off before its
+                # relevant segment (an extremely long current line on
+                # a very short screen) - the last row shown is the
+                # closest thing to "where the cursor is" available.
+                cursor_row_offset = max(0, len(row_descriptors) - 1)
+            cursor_row = 2 + cursor_row_offset
             cursor_column = (
                 editor_col_offset + gutter_width + 1
-                + self._display_column()
+                + len(self._display_text(
+                    self.lines[self.line][cursor_seg_start:self.column]
+                ))
             )
         elif self.command is not None:
             cursor_row = input_row
@@ -503,8 +620,23 @@ class RenderMixin:
         sys.stdout.write("".join(output))
         sys.stdout.flush()
 
-    def _ensure_cursor_visible(self, visible_rows):
+    def _ensure_cursor_visible(self, visible_rows, content_width):
         if self.line < self.viewport_top:
             self.viewport_top = self.line
-        elif self.line >= self.viewport_top + visible_rows:
-            self.viewport_top = self.line - visible_rows + 1
+            return
+        rows_needed = sum(
+            _line_row_count(self.lines[index], content_width)
+            for index in range(self.viewport_top, self.line + 1)
+        )
+        # Doesn't fit from the current viewport_top - slide it forward
+        # one line at a time (dropping that line's own row count from
+        # the running total) until it does, the same idea as the old
+        # closed-form shortcut, just accounting for a line that can
+        # now cost more than one row. Stops at self.line itself even
+        # if that one line alone still doesn't fit the whole screen -
+        # its own first rows are still the right thing to show.
+        while rows_needed > visible_rows and self.viewport_top < self.line:
+            rows_needed -= _line_row_count(
+                self.lines[self.viewport_top], content_width
+            )
+            self.viewport_top += 1

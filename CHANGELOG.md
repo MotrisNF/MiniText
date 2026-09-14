@@ -5,6 +5,19 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Fixed a real display bug: a line longer than the terminal's width
+  used to overflow into the next screen row at column 1 (the
+  terminal's own line-wrap, not Mini's), landing under the gutter
+  instead of the text and getting stomped by whatever was drawn on
+  that row next. Long lines now soft-wrap onto as many extra rows as
+  needed, with each continuation row's gutter area left blank so the
+  text still starts right where it should - visibly the same line,
+  continued. Selection, bracket-matching, and the cursor all
+  correctly follow a line across its wrap points.
+- Comments are now colored (a new `COMMENT_COLOR` setting) instead of
+  sharing the plain text color, for both Python's `#` and C/C++'s
+  `//` and `/* */`.
+
 - Added syntax highlighting and autocompletion for C (`.c`/`.h`) and
   C++ (`.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx`): keywords, built-in
   type names, preprocessor directives, and string/char literals

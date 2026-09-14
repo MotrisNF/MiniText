@@ -37,7 +37,7 @@ def _highlight(display_text, lookahead=""):
         if token[0] in ("'", '"'):
             return f"{theme.STRING_COLOR}{token}{theme.COLOR_RESET}"
         if token[0] == "#":
-            return token
+            return f"{theme.COMMENT_COLOR}{token}{theme.COLOR_RESET}"
         if token in DECLARATION_KEYWORDS:
             return f"{theme.DECLARATION_COLOR}{token}{theme.COLOR_RESET}"
         if token in keyword.kwlist:
@@ -78,7 +78,7 @@ def _highlight_c(display_text, lookahead="", cpp=False):
         if token[0] in ("'", '"'):
             return f"{theme.STRING_COLOR}{token}{theme.COLOR_RESET}"
         if token.startswith("//") or token.startswith("/*"):
-            return token
+            return f"{theme.COMMENT_COLOR}{token}{theme.COLOR_RESET}"
         if token.startswith("#"):
             return f"{theme.DECLARATION_COLOR}{token}{theme.COLOR_RESET}"
         if token in keywords or token in literals:
