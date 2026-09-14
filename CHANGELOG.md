@@ -11,6 +11,11 @@ matches `VERSION` (what `mini --version` prints).
   more often than not. Same single-line-only reach as everything
   else here: one that doesn't close on the line it starts isn't
   colored at all, same as before.
+- Fixed quote-matching splitting a docstring's coloring apart when
+  the cursor landed on one of its own three-quote delimiters (it has
+  no notion of a triple-quote as one unit, so it would pair up two
+  of the docstring's own quote characters instead) - it now leaves a
+  same-line triple-quoted string alone entirely.
 
 - Fixed a real display bug: a line longer than the terminal's width
   used to overflow into the next screen row at column 1 (the

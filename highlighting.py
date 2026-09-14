@@ -18,14 +18,33 @@ TYPE_NAMES = {
     "frozenset", "bytes", "bytearray", "complex", "object", "type",
 }
 DECLARATION_KEYWORDS = {"def", "class"}
-_TOKEN_PATTERN = re.compile(
+_TRIPLE_QUOTE_SOURCE = (
     r'"""(?:[^\\]|\\.)*?"""'
     r"|'''(?:[^\\]|\\.)*?'''"
-    r"|'(?:[^'\\]|\\.)*'"
+)
+TRIPLE_QUOTE_PATTERN = re.compile(_TRIPLE_QUOTE_SOURCE)
+_TOKEN_PATTERN = re.compile(
+    _TRIPLE_QUOTE_SOURCE
+    + r"|'(?:[^'\\]|\\.)*'"
     r'|"(?:[^"\\]|\\.)*"'
     r"|#.*"
     r"|[A-Za-z_][A-Za-z0-9_]*"
 )
+
+
+def is_in_triple_quoted_string(line, column):
+    """Whether `column` falls within a same-line triple-quoted
+    string/docstring. Quote-matching (bracket/quote highlighting)
+    has no triple-quote awareness of its own - it just treats each
+    `'` or `"` as its own single matchable quote character, which
+    would otherwise pair up two of a docstring's own delimiter
+    characters (or split its highlighting around whichever one the
+    cursor happens to land on) instead of leaving the whole thing
+    alone as the one block it actually is."""
+    for match in TRIPLE_QUOTE_PATTERN.finditer(line):
+        if match.start() <= column < match.end():
+            return True
+    return False
 
 
 def _highlight(display_text, lookahead=""):

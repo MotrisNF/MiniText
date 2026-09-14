@@ -9,7 +9,7 @@ import sys
 import theme
 from autocomplete import MAX_SUGGESTION_DROPDOWN_ITEMS
 from editing import BRACKET_PAIRS, CLOSING_TO_OPENING, QUOTE_CHARACTERS
-from highlighting import _highlight, _highlight_c
+from highlighting import _highlight, _highlight_c, is_in_triple_quoted_string
 from languages import language_for
 from terminal import _get_terminal_size
 from worktree import MIN_EDITOR_WIDTH, WORKTREE_SEPARATOR_WIDTH, WORKTREE_WIDTH
@@ -72,6 +72,14 @@ class RenderMixin:
     def _matching_bracket_position(self):
         line = self.lines[self.line]
         if self.column >= len(line):
+            return None
+        if is_in_triple_quoted_string(line, self.column):
+            # Quote-matching has no notion of a triple-quote as one
+            # three-character delimiter - left alone, it would pair
+            # up two of the docstring's own quotes (or split its
+            # highlighting apart at whichever one the cursor is on)
+            # instead of leaving the whole thing as the one
+            # comment-colored block it actually renders as.
             return None
         character = line[self.column]
         if character in BRACKET_PAIRS:
