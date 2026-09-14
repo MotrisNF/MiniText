@@ -19,7 +19,9 @@ TYPE_NAMES = {
 }
 DECLARATION_KEYWORDS = {"def", "class"}
 _TOKEN_PATTERN = re.compile(
-    r"'(?:[^'\\]|\\.)*'"
+    r'"""(?:[^\\]|\\.)*?"""'
+    r"|'''(?:[^\\]|\\.)*?'''"
+    r"|'(?:[^'\\]|\\.)*'"
     r'|"(?:[^"\\]|\\.)*"'
     r"|#.*"
     r"|[A-Za-z_][A-Za-z0-9_]*"
@@ -34,6 +36,12 @@ def _highlight(display_text, lookahead=""):
     a call, right when it matters most (cursor on that bracket)."""
     def _colorize(match):
         token = match.group()
+        if token.startswith('"""') or token.startswith("'''"):
+            # A docstring/triple-quoted string is treated as a
+            # comment, same color and all - same single-line-only
+            # reach as everything else here, so only one that both
+            # starts and ends on this line is recognized as such.
+            return f"{theme.COMMENT_COLOR}{token}{theme.COLOR_RESET}"
         if token[0] in ("'", '"'):
             return f"{theme.STRING_COLOR}{token}{theme.COLOR_RESET}"
         if token[0] == "#":

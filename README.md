@@ -16,7 +16,10 @@ usable as a general-purpose text editor for anything else.
   (`__init__`, `__name__`, ...), built-in type names, function
   calls/definitions, string literals (quotes included), and comments,
   each in its own color. `def` and `class` get a color of their own,
-  separate from the rest of the keywords.
+  separate from the rest of the keywords. A triple-quoted string
+  (`"""..."""` or `'''...'''`) is treated as a comment - same color
+  and all - rather than as a regular string, since that's how it's
+  actually used (a docstring) far more often than not.
 - Autocompletion for `.py` files, drawing from words already used in
   the file plus Python's keywords and built-ins, and, after `import`
   or `from`, standard library modules as well as `.py` files and

@@ -5,6 +5,13 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Triple-quoted Python strings (`"""..."""`/`'''...'''`) are now
+  colored as comments (`COMMENT_COLOR`) instead of as regular
+  strings, matching how they're actually used - a docstring - far
+  more often than not. Same single-line-only reach as everything
+  else here: one that doesn't close on the line it starts isn't
+  colored at all, same as before.
+
 - Fixed a real display bug: a line longer than the terminal's width
   used to overflow into the next screen row at column 1 (the
   terminal's own line-wrap, not Mini's), landing under the gutter
