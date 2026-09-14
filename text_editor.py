@@ -147,6 +147,15 @@ def _is_word_char(character):
     return character.isalnum() or character == "_"
 
 
+def _indent_unit():
+    """One level of new indentation, per ~/.minirc's INDENT_WITH_TABS
+    and TAB_SIZE: a tab character, or TAB_SIZE spaces. Only decides
+    what gets *added* for a new indent level - carrying over a line's
+    *existing* indentation (whatever mix of characters it already
+    has) is handled separately, verbatim, by `_leading_whitespace`."""
+    return "\t" if theme.INDENT_WITH_TABS else " " * theme.TAB_SIZE
+
+
 _WORD_PATTERN = re.compile(r"\w+")
 _LINE_WORD_CACHE_LIMIT = 20000
 
@@ -685,7 +694,7 @@ class TextEditor:
 
     @staticmethod
     def _display_text(text):
-        return text.replace("\t", "    ")
+        return text.replace("\t", " " * theme.TAB_SIZE)
 
     def _display_column(self):
         return len(self._display_text(self.lines[self.line][:self.column]))
@@ -1625,26 +1634,30 @@ class TextEditor:
             self.lines[self.line] = current_line + next_line
 
     @staticmethod
-    def _leading_tabs(line):
+    def _leading_whitespace(line):
+        """`line`'s own leading indentation, verbatim (spaces, tabs,
+        or a mix) - auto-indent carries this over as-is; only a *new*
+        level added on top of it goes through `_indent_unit`, per the
+        configured style."""
         count = 0
         for character in line:
-            if character != "\t":
+            if character not in (" ", "\t"):
                 break
             count += 1
-        return "\t" * count
+        return line[:count]
 
     def _new_line(self):
         self._snapshot()
         current_line = self.lines[self.line]
         before = current_line[:self.column]
         after = current_line[self.column:]
-        indent = self._leading_tabs(current_line)
+        indent = self._leading_whitespace(current_line)
         between_brackets = (
             before and before[-1] in BRACKET_PAIRS
             and after and after[0] == BRACKET_PAIRS[before[-1]]
         )
         if between_brackets:
-            inner_indent = indent + "\t"
+            inner_indent = indent + _indent_unit()
             self.lines[self.line] = before
             self.lines.insert(self.line + 1, inner_indent)
             self.lines.insert(self.line + 2, indent + after)
@@ -1652,7 +1665,7 @@ class TextEditor:
             self.column = len(inner_indent)
             return
         if before.rstrip().endswith(":"):
-            indent += "\t"
+            indent += _indent_unit()
         self.lines[self.line] = before
         self.lines.insert(self.line + 1, indent + after)
         self.line += 1
@@ -2533,7 +2546,7 @@ class TextEditor:
                         if self.suggestion_matches:
                             self._accept_highlighted_suggestion()
                         else:
-                            self._insert(key)
+                            self._insert(_indent_unit())
                     elif (
                         self.mode == "insert"
                         and len(key) == 1

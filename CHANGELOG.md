@@ -5,6 +5,23 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Added `INDENT_WITH_TABS` (default `False`) and `TAB_SIZE` (default
+  `4`) to `~/.minirc`: auto-indent, the bracket-splitting Enter, and
+  the Tab key now insert spaces by default instead of always a tab
+  character, and the display width of an actual tab character in the
+  buffer follows `TAB_SIZE` instead of a hardcoded 4.
+- Fixed auto-indent to carry over a line's *real* leading whitespace
+  verbatim - it used to only recognize literal tab characters, so a
+  space-indented line (now Mini's own default) would lose its
+  indentation entirely on Enter instead of carrying it over.
+- An update (`mini --update`, or re-running `make install`) now adds
+  any setting or color key a newer Mini introduced but an existing
+  `~/.minirc` doesn't have yet, appending it with its default value -
+  every existing value, comment, and custom section is left exactly
+  as it was. Previously a missing key only ever fell back to an
+  invisible in-code default, never actually appearing in the file.
+- The installer now also adds `~/.local/bin` to `~/.hellishrc`'s
+  `PATH` (if present), alongside `~/.bashrc`/`~/.zshrc`/`~/.profile`.
 - Added `:cmd <text>`, running `text` as a `bash -c` command in the
   same output panel as `:run`/`:lint` (Ctrl+C, scrolling, and all).
   Unlike `:run`/`:lint`, it never forces a save of the current buffer

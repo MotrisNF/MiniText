@@ -11,6 +11,8 @@ anything about the config file format.
     THEME=base
     SHOW_NUMBER_LINE=True
     SHOW_LINE_INDICATOR=True
+    INDENT_WITH_TABS=False
+    TAB_SIZE=4
 
     [base]
     BACKGROUND_COLOR=235
@@ -35,9 +37,16 @@ whenever ~/.minirc loads and validates cleanly, it's mirrored into
 value, or fails to parse altogether, the missing pieces are recovered
 from ~/.minirc.bak before falling back to the hardcoded defaults below,
 so a typo in a hand-edited color never breaks the editor.
+
+Whenever a Mini update adds a setting or color key that an existing
+~/.minirc doesn't have yet, install.sh calls `_migrate_rc_file` (via
+`python3 theme.py --migrate <path>`) to append it - with its default
+value - right into that file, so it stays visible and editable
+instead of silently living only as an in-code fallback forever.
 """
 
 import os
+import sys
 
 RC_PATH = os.path.expanduser("~/.minirc")
 BACKUP_PATH = os.path.expanduser("~/.minirc.bak")
@@ -95,9 +104,12 @@ DEFAULT_THEMES = {
 # flake8/pycodestyle's own default max-line-length, reused here so a
 # fresh install's ruler lines up with what flake8 would flag anyway.
 DEFAULT_MAX_COLS = 79
+DEFAULT_INDENT_WITH_TABS = False
+DEFAULT_TAB_SIZE = 4
 DEFAULT_SETTINGS = {
     "THEME": "base", "SHOW_NUMBER_LINE": True, "SHOW_LINE_INDICATOR": True,
     "MAX_COLS": DEFAULT_MAX_COLS,
+    "INDENT_WITH_TABS": DEFAULT_INDENT_WITH_TABS, "TAB_SIZE": DEFAULT_TAB_SIZE,
 }
 
 
@@ -151,17 +163,18 @@ def _parse_rc(path):
 
 def _resolve_settings(primary, backup):
     settings = dict(DEFAULT_SETTINGS)
-    for key in ("SHOW_NUMBER_LINE", "SHOW_LINE_INDICATOR"):
+    for key in ("SHOW_NUMBER_LINE", "SHOW_LINE_INDICATOR", "INDENT_WITH_TABS"):
         for source in (primary, backup):
             if key in source:
                 settings[key] = _parse_bool(source[key], settings[key])
                 break
-    for source in (primary, backup):
-        if "MAX_COLS" in source:
-            settings["MAX_COLS"] = _parse_positive_int(
-                source["MAX_COLS"], settings["MAX_COLS"]
-            )
-            break
+    for key in ("MAX_COLS", "TAB_SIZE"):
+        for source in (primary, backup):
+            if key in source:
+                settings[key] = _parse_positive_int(
+                    source[key], settings[key]
+                )
+                break
     for source in (primary, backup):
         if source.get("THEME"):
             settings["THEME"] = source["THEME"]
@@ -214,6 +227,10 @@ def _default_rc_text():
         "# MAX_COLS draws a ruler at that column (flake8's own default,",
         "# 79, by default here too) and flags lines that cross it.",
         f"MAX_COLS={DEFAULT_SETTINGS['MAX_COLS']}",
+        "# INDENT_WITH_TABS picks what auto-indent and Tab insert: a",
+        "# tab character (True) or TAB_SIZE spaces (False).",
+        f"INDENT_WITH_TABS={DEFAULT_SETTINGS['INDENT_WITH_TABS']}",
+        f"TAB_SIZE={DEFAULT_SETTINGS['TAB_SIZE']}",
         "",
         "# Each color below is an xterm 256-color palette number (0-255).",
         "# https://www.ditig.com/256-colors-cheat-sheet is a handy chart.",
@@ -233,6 +250,8 @@ def _refresh_backup_if_valid(settings, primary_settings, primary_themes):
         and "SHOW_NUMBER_LINE" in primary_settings
         and "SHOW_LINE_INDICATOR" in primary_settings
         and "MAX_COLS" in primary_settings
+        and "INDENT_WITH_TABS" in primary_settings
+        and "TAB_SIZE" in primary_settings
         and _is_theme_fully_valid(settings["THEME"], primary_themes)
     )
     if not fully_valid:
@@ -244,6 +263,80 @@ def _refresh_backup_if_valid(settings, primary_settings, primary_themes):
             backup_file.write(content)
     except OSError:
         pass
+
+
+def _migrate_rc_file(path):
+    """Adds any settings/color keys this version of Mini knows about
+    but `path` doesn't have yet, appending each - with its default
+    value - to whatever's already there. Every existing value,
+    comment, and custom section is left exactly as it was; only
+    genuinely missing keys are added, so an update never quietly
+    drops something the user could see and tweak into an invisible
+    in-code fallback. Returns the keys that were actually added (as
+    "KEY" for a top-level setting, "section.KEY" for a color); doesn't
+    touch the file at all when there was nothing missing."""
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            lines = file.readlines()
+    except OSError:
+        return []
+
+    section_starts = []
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section_starts.append((stripped[1:-1].strip(), index))
+    first_section_line = (
+        section_starts[0][1] if section_starts else len(lines)
+    )
+
+    def existing_keys(start, end):
+        keys = set()
+        for raw_line in lines[start:end]:
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith(("#", "[")):
+                continue
+            key = stripped.split("=", 1)[0].strip()
+            if key:
+                keys.add(key)
+        return keys
+
+    added = []
+
+    # Section color keys first, working from the last section to the
+    # first, so each section's own insertion point (its end) never
+    # has to account for edits made to a section that comes after it.
+    for position in range(len(section_starts) - 1, -1, -1):
+        name, header_index = section_starts[position]
+        if name not in DEFAULT_THEMES:
+            continue  # a custom section has no known default to add
+        end = (
+            section_starts[position + 1][1]
+            if position + 1 < len(section_starts) else len(lines)
+        )
+        section_keys = existing_keys(header_index + 1, end)
+        for key in _COLOR_KINDS:
+            if key in section_keys:
+                continue
+            lines.insert(end, f"{key}={DEFAULT_THEMES[name][key]}\n")
+            end += 1
+            added.append(f"{name}.{key}")
+
+    # Top-level settings last, right before the first section header
+    # (or at the end of the file if there are no sections at all) -
+    # nothing before that point has been touched by the loop above.
+    top_level_keys = existing_keys(0, first_section_line)
+    for key in DEFAULT_SETTINGS:
+        if key in top_level_keys:
+            continue
+        lines.insert(first_section_line, f"{key}={DEFAULT_SETTINGS[key]}\n")
+        first_section_line += 1
+        added.append(key)
+
+    if added:
+        with open(path, "w", encoding="utf-8") as file:
+            file.writelines(lines)
+    return added
 
 
 def _load():
@@ -274,6 +367,8 @@ _settings, _colors = _load()
 SHOW_NUMBER_LINE = _settings["SHOW_NUMBER_LINE"]
 SHOW_LINE_INDICATOR = _settings["SHOW_LINE_INDICATOR"]
 MAX_COLS = _settings["MAX_COLS"]
+INDENT_WITH_TABS = _settings["INDENT_WITH_TABS"]
+TAB_SIZE = _settings["TAB_SIZE"]
 
 BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", _colors["BACKGROUND_COLOR"])
 TEXT_COLOR = _ansi("TEXT_COLOR", _colors["TEXT_COLOR"])
@@ -319,6 +414,17 @@ DECLARATION_COLOR = _ansi(
 
 
 if __name__ == "__main__":
-    # Used by install.sh to seed a fresh ~/.minirc: `python3 theme.py`
-    # prints the default config text (settings + base/dark/light).
-    print(_default_rc_text())
+    # Used by install.sh: bare `python3 theme.py` seeds a fresh
+    # ~/.minirc (settings + base/dark/light). `python3 theme.py
+    # --migrate <path>` instead adds any keys this version knows
+    # about that <path> doesn't have yet, for an existing ~/.minirc
+    # being carried through an update.
+    if len(sys.argv) >= 3 and sys.argv[1] == "--migrate":
+        added_keys = _migrate_rc_file(sys.argv[2])
+        if added_keys:
+            print(
+                "Added new setting(s) to your ~/.minirc: "
+                + ", ".join(added_keys)
+            )
+    else:
+        print(_default_rc_text())

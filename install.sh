@@ -5,7 +5,8 @@ MARK_BEGIN="# >>> mini PATH >>>"
 MARK_END="# <<< mini PATH <<<"
 
 rc_files() {
-  for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+  for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" \
+    "$HOME/.hellishrc"; do
     [ -e "$f" ] && printf '%s\n' "$f"
   done
 }
@@ -104,9 +105,18 @@ if [ ! -e "$HOME/.minirc" ]; then
   python3 "$libdir/src/theme.py" > "$HOME/.minirc"
   cp "$HOME/.minirc" "$HOME/.minirc.bak"
   echo "  Created $HOME/.minirc (base/dark/light themes, edit freely)"
-elif [ ! -e "$HOME/.minirc.bak" ]; then
-  cp "$HOME/.minirc" "$HOME/.minirc.bak"
-  echo "  Created $HOME/.minirc.bak from your existing $HOME/.minirc"
+else
+  if [ ! -e "$HOME/.minirc.bak" ]; then
+    cp "$HOME/.minirc" "$HOME/.minirc.bak"
+    echo "  Created $HOME/.minirc.bak from your existing $HOME/.minirc"
+  fi
+  # Carries any setting/color key a newer Mini added over the years
+  # into an existing ~/.minirc, so it doesn't just silently fall back
+  # to an invisible in-code default forever.
+  migration_report="$(python3 "$libdir/src/theme.py" --migrate "$HOME/.minirc")"
+  if [ -n "$migration_report" ]; then
+    echo "  $migration_report"
+  fi
 fi
 
 add_to_path "$bindir"

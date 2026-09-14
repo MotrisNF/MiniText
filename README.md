@@ -67,12 +67,14 @@ usable as a general-purpose text editor for anything else.
   with smart backspace: deleting an opening character removes its
   auto-inserted counterpart too, but only if nothing was typed between
   them.
-- Auto-indentation on Enter, carrying over the current line's
-  indentation and adding one level after a trailing colon. Pressing
-  Enter right between a matching pair of brackets (`foo(|)`) instead
-  splits into three lines - the opening line, an empty line indented
-  one level further where the cursor lands, and the closing bracket
-  on its own line back at the original indentation.
+- Auto-indentation on Enter, carrying over the current line's actual
+  indentation - whatever mix of tabs/spaces it already is - and
+  adding one new level (a tab or `TAB_SIZE` spaces, per
+  `INDENT_WITH_TABS`) after a trailing colon. Pressing Enter right
+  between a matching pair of brackets (`foo(|)`) instead splits into
+  three lines - the opening line, an empty line indented one level
+  further where the cursor lands, and the closing bracket on its own
+  line back at the original indentation.
 - A worktree file explorer shown as a side panel next to the editor,
   for browsing, opening, creating, and deleting files and directories
   without leaving the terminal. Opening a file from the panel always
@@ -116,7 +118,8 @@ This installs the `mini` command for the current user:
 - The source files are copied to `~/.local/share/mini`.
 - A launcher script is installed at `~/.local/bin/mini`.
 - `~/.local/bin` is added to your `PATH` in `~/.bashrc`, `~/.zshrc`,
-  and `~/.profile` (whichever exist), if it isn't there already.
+  `~/.profile`, and `~/.hellishrc` (whichever exist), if it isn't
+  there already.
 - A default `~/.minirc` (and its backup, `~/.minirc.bak`) is created
   if you don't already have one. An existing `~/.minirc` is never
   overwritten.
@@ -162,6 +165,14 @@ regardless of when it last checked. This only works for a `make
 install`-created install, not for running `python3 main.py` straight
 from a checkout. See [CHANGELOG.md](CHANGELOG.md) for what an update
 actually brings.
+
+Either way, the reinstall step also carries your `~/.minirc` forward:
+any setting or color key a newer Mini added that your file doesn't
+have yet gets appended to it, with its default value, right next to
+whatever's already there - every existing value, comment, and custom
+section is left untouched. That way a new setting is something you
+can actually see and tweak, not just an invisible fallback you'd
+never know existed.
 
 ## Modes
 
@@ -334,13 +345,17 @@ changes asks whether to save them first.
 
 Mini reads `~/.minirc` on startup. The installer creates one with
 sensible defaults; you can edit it freely; it is never overwritten
-except to refresh its backup copy.
+except to refresh its backup copy - and to add any setting a newer
+Mini introduces after an update, if your file doesn't have it yet
+(see "Updating" above).
 
 ```ini
 THEME=base
 SHOW_NUMBER_LINE=True
 SHOW_LINE_INDICATOR=True
 MAX_COLS=79
+INDENT_WITH_TABS=False
+TAB_SIZE=4
 
 [base]
 BACKGROUND_COLOR=235
@@ -377,6 +392,14 @@ DECLARATION_COLOR=203
   instead of the two fighting for the same spot. A line that's
   actually longer than `MAX_COLS` gets a `●` in `LINE_LENGTH_ERROR_COLOR`
   where its line number/marker would be, instead of the ruler.
+- `INDENT_WITH_TABS` (default `False`) picks what auto-indent, the
+  bracket-splitting Enter, and the Tab key insert for one new level
+  of indentation: a tab character (`True`) or `TAB_SIZE` spaces
+  (`False`). It only affects newly-inserted indentation - a line's
+  existing leading whitespace, whatever it already is, is always
+  carried over verbatim by Enter. `TAB_SIZE` (default `4`) is also
+  how wide an actual tab character displays as, wherever one appears
+  in a line (typed, pasted, or already in a file you opened).
 - Every color is an xterm 256-color palette number (0-255); a chart
   such as <https://www.ditig.com/256-colors-cheat-sheet> is a
   convenient reference. `RULER_COLOR` and `LINE_LENGTH_ERROR_COLOR`
