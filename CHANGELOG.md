@@ -5,6 +5,9 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Added `Ctrl+H` in the worktree panel, toggling whether hidden
+  files/directories (name starting with `.`) are shown - hidden by
+  default, at every depth.
 - Added `INDENT_WITH_TABS` (default `False`) and `TAB_SIZE` (default
   `4`) to `~/.minirc`: auto-indent, the bracket-splitting Enter, and
   the Tab key now insert spaces by default instead of always a tab

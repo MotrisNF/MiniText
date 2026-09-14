@@ -569,6 +569,7 @@ class TextEditor:
         self.worktree_visible_because_of_focus = False
         self.worktree_root = os.getcwd()
         self.worktree_expanded = set()
+        self.worktree_show_hidden = False
         self.worktree_cursor = 0
         self.worktree_scroll = 0
         self.worktree_selected_dir = self.worktree_root
@@ -819,7 +820,8 @@ class TextEditor:
             "    h collapses it, Enter opens a file as a tab\r\n",
             "    (or switches to it if already open) or\r\n",
             "    expands/collapses a directory. Ctrl+F new file,\r\n",
-            "    Ctrl+D new folder, Del deletes, v/Esc return focus,\r\n",
+            "    Ctrl+D new folder, Ctrl+H toggles hidden files,\r\n",
+            "    Del deletes, v/Esc return focus,\r\n",
             "    : or i jump to Command/Insert\r\n",
             "  Tab      Switch to the next tab (Visual mode)\r\n",
             "  Shift+Tab  Switch to the previous tab (Visual mode)\r\n",
@@ -1777,6 +1779,7 @@ class TextEditor:
             return self._worktree_entries_cache
 
         entries = []
+        show_hidden = self.worktree_show_hidden
 
         def walk(directory, depth):
             try:
@@ -1787,6 +1790,8 @@ class TextEditor:
             except OSError:
                 children = []
             for entry in children:
+                if not show_hidden and entry.name.startswith("."):
+                    continue
                 entries.append((entry.path, entry.name, entry.is_dir(), depth))
                 if entry.is_dir() and entry.path in self.worktree_expanded:
                     walk(entry.path, depth + 1)
@@ -2412,6 +2417,11 @@ class TextEditor:
                             self._worktree_create(is_directory=False)
                         elif key == "\x04":
                             self._worktree_create(is_directory=True)
+                        elif key == "\x08":
+                            self.worktree_show_hidden = (
+                                not self.worktree_show_hidden
+                            )
+                            self._invalidate_worktree_cache()
                         elif key == "DELETE":
                             self._worktree_delete(entries)
                         elif key in ("v", ESC):

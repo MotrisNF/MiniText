@@ -303,6 +303,9 @@ instead, it stays visible after you leave focus - `:tree` is the
 `mini .` (or `mini <dir>`) starts with the panel shown and focused,
 as it always did.
 
+Hidden files and directories (name starting with `.`) are hidden by
+default, at every depth - `Ctrl+H` toggles showing them.
+
 While the panel is visible, the status/command line and the mode bar
 at the bottom start right where the panel ends, lining up with the
 code above them instead of running under the panel.
@@ -315,6 +318,7 @@ code above them instead of running under the panel.
 | Enter          | Open a file as a tab (switching to it if already open), or expand/collapse a directory |
 | Ctrl+F         | Create a new file (prompts for a name)                         |
 | Ctrl+D         | Create a new directory (prompts for a name)                    |
+| Ctrl+H         | Toggle showing hidden files/directories (names starting with `.`) |
 | Delete         | Delete the selected file or directory, after confirming        |
 | `v`, `Esc`     | Return focus to the editor                                     |
 | `:`, `i`       | Return focus to the editor directly in Command or Insert mode  |
