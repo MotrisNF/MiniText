@@ -11,6 +11,8 @@ anything about the config file format.
     THEME=base
     SHOW_NUMBER_LINE=True
     SHOW_LINE_INDICATOR=True
+    MAX_COLS_ENABLED=True
+    MAX_COLS=79
     INDENT_WITH_TABS=False
     TAB_SIZE=4
 
@@ -24,12 +26,26 @@ anything about the config file format.
     [light]
     ...
 
+    [filetype:.js]
+    MAX_COLS=100
+    INDENT_WITH_TABS=False
+    TAB_SIZE=2
+
 THEME picks which [section] is active - it can name any section in the
 file, including ones the user adds themselves; sections that aren't
 base/dark/light are just as valid. Each color value is an xterm
 256-color palette number (0-255); whether a given key is used as a
 foreground or a background is fixed (see _COLOR_KINDS below), not
 something the user chooses.
+
+A `[filetype:EXT]` section (EXT including the leading dot, e.g.
+`.js`) overrides MAX_COLS_ENABLED/MAX_COLS/INDENT_WITH_TABS/TAB_SIZE
+for files with that extension - only the keys it actually sets; any
+key it leaves out still falls back to the plain top-level default
+above. This dictionary is entirely user-opt-in and freely extensible:
+there's no fixed list of "known" extensions - add a `[filetype:.ext]`
+section for any extension you want your own settings for, and delete
+one to go back to the default. See `settings_for(file_name)` below.
 
 ~/.minirc.bak is a safety net, not something meant to be hand-edited:
 whenever ~/.minirc loads and validates cleanly, it's mirrored into
@@ -109,9 +125,15 @@ DEFAULT_INDENT_WITH_TABS = False
 DEFAULT_TAB_SIZE = 4
 DEFAULT_SETTINGS = {
     "THEME": "base", "SHOW_NUMBER_LINE": True, "SHOW_LINE_INDICATOR": True,
-    "MAX_COLS": DEFAULT_MAX_COLS,
+    "MAX_COLS_ENABLED": True, "MAX_COLS": DEFAULT_MAX_COLS,
     "INDENT_WITH_TABS": DEFAULT_INDENT_WITH_TABS, "TAB_SIZE": DEFAULT_TAB_SIZE,
 }
+# Keys a [filetype:.ext] section may override - same names and same
+# parsing as their top-level counterparts in DEFAULT_SETTINGS, just
+# scoped to one extension instead of applying to every file.
+_FILETYPE_BOOL_KEYS = ("MAX_COLS_ENABLED", "INDENT_WITH_TABS")
+_FILETYPE_INT_KEYS = ("MAX_COLS", "TAB_SIZE")
+FILETYPE_SECTION_PREFIX = "filetype:"
 
 
 def _parse_bool(value, fallback):
@@ -164,7 +186,10 @@ def _parse_rc(path):
 
 def _resolve_settings(primary, backup):
     settings = dict(DEFAULT_SETTINGS)
-    for key in ("SHOW_NUMBER_LINE", "SHOW_LINE_INDICATOR", "INDENT_WITH_TABS"):
+    for key in (
+        "SHOW_NUMBER_LINE", "SHOW_LINE_INDICATOR", "MAX_COLS_ENABLED",
+        "INDENT_WITH_TABS",
+    ):
         for source in (primary, backup):
             if key in source:
                 settings[key] = _parse_bool(source[key], settings[key])
@@ -181,6 +206,37 @@ def _resolve_settings(primary, backup):
             settings["THEME"] = source["THEME"]
             break
     return settings
+
+
+def _resolve_filetype_overrides(primary_themes, backup_themes):
+    """{extension: {key: value}} built from every `[filetype:EXT]`
+    section found in either file - `primary` (~/.minirc) wins over
+    `backup` key-by-key, the same priority every other setting here
+    uses. Purely user-opt-in: an extension with no such section
+    simply isn't a key in the returned dict, and a key a section
+    doesn't set (or sets to something invalid) is left out of that
+    extension's own dict too - either way, `settings_for` below falls
+    back to the plain top-level default for whatever's missing."""
+    overrides = {}
+    for themes in (backup_themes, primary_themes):
+        for section, values in themes.items():
+            if not section.startswith(FILETYPE_SECTION_PREFIX):
+                continue
+            extension = section[len(FILETYPE_SECTION_PREFIX):].strip()
+            if not extension:
+                continue
+            resolved = overrides.setdefault(extension.lower(), {})
+            for key in _FILETYPE_BOOL_KEYS:
+                if key in values:
+                    parsed = _parse_bool(values[key], None)
+                    if parsed is not None:
+                        resolved[key] = parsed
+            for key in _FILETYPE_INT_KEYS:
+                if key in values:
+                    parsed = _parse_positive_int(values[key], None)
+                    if parsed is not None:
+                        resolved[key] = parsed
+    return overrides
 
 
 def _valid_palette_number(raw):
@@ -226,7 +282,10 @@ def _default_rc_text():
         f"SHOW_NUMBER_LINE={DEFAULT_SETTINGS['SHOW_NUMBER_LINE']}",
         f"SHOW_LINE_INDICATOR={DEFAULT_SETTINGS['SHOW_LINE_INDICATOR']}",
         "# MAX_COLS draws a ruler at that column (flake8's own default,",
-        "# 79, by default here too) and flags lines that cross it.",
+        "# 79, by default here too) and flags lines that cross it;",
+        "# MAX_COLS_ENABLED turns the ruler and the flagging off",
+        "# entirely when set to False.",
+        f"MAX_COLS_ENABLED={DEFAULT_SETTINGS['MAX_COLS_ENABLED']}",
         f"MAX_COLS={DEFAULT_SETTINGS['MAX_COLS']}",
         "# INDENT_WITH_TABS picks what auto-indent and Tab insert: a",
         "# tab character (True) or TAB_SIZE spaces (False).",
@@ -242,6 +301,24 @@ def _default_rc_text():
         for key, value in DEFAULT_THEMES[theme_name].items():
             lines.append(f"{key}={value}")
     lines.append("")
+    lines.append(
+        "# [filetype:.ext] overrides MAX_COLS_ENABLED/MAX_COLS/"
+        "INDENT_WITH_TABS/TAB_SIZE"
+    )
+    lines.append(
+        "# for files with that extension - only the keys it sets; add "
+        "or remove"
+    )
+    lines.append(
+        "# sections freely, for any extension you want. Example "
+        "(disabled - remove"
+    )
+    lines.append("# the leading # on each line to actually use it):")
+    lines.append("# [filetype:.js]")
+    lines.append("# MAX_COLS=100")
+    lines.append("# INDENT_WITH_TABS=False")
+    lines.append("# TAB_SIZE=2")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -250,6 +327,7 @@ def _refresh_backup_if_valid(settings, primary_settings, primary_themes):
         "THEME" in primary_settings
         and "SHOW_NUMBER_LINE" in primary_settings
         and "SHOW_LINE_INDICATOR" in primary_settings
+        and "MAX_COLS_ENABLED" in primary_settings
         and "MAX_COLS" in primary_settings
         and "INDENT_WITH_TABS" in primary_settings
         and "TAB_SIZE" in primary_settings
@@ -354,8 +432,32 @@ def _load():
     colors = _resolve_theme_colors(
         settings["THEME"], primary_themes, backup_themes
     )
+    filetype_overrides = _resolve_filetype_overrides(
+        primary_themes, backup_themes
+    )
     _refresh_backup_if_valid(settings, primary_settings, primary_themes)
-    return settings, colors
+    return settings, colors, filetype_overrides
+
+
+def settings_for(file_name):
+    """The effective {MAX_COLS_ENABLED, MAX_COLS, INDENT_WITH_TABS,
+    TAB_SIZE} for `file_name`, honoring its extension's own
+    `[filetype:.ext]` section (~/.minirc) for whichever of those keys
+    it actually sets - any key it doesn't set, an extension with no
+    section at all, or no file name at all (an unsaved buffer), falls
+    back to the plain top-level default (the same values the flat
+    MAX_COLS/INDENT_WITH_TABS/... module attributes below expose)."""
+    base = {
+        "MAX_COLS_ENABLED": MAX_COLS_ENABLED, "MAX_COLS": MAX_COLS,
+        "INDENT_WITH_TABS": INDENT_WITH_TABS, "TAB_SIZE": TAB_SIZE,
+    }
+    if not file_name:
+        return base
+    extension = os.path.splitext(file_name)[1].lower()
+    override = _filetype_overrides.get(extension)
+    if not override:
+        return base
+    return {**base, **override}
 
 
 def _ansi(key, value):
@@ -363,10 +465,11 @@ def _ansi(key, value):
     return f"\x1b[{prefix};5;{value}m"
 
 
-_settings, _colors = _load()
+_settings, _colors, _filetype_overrides = _load()
 
 SHOW_NUMBER_LINE = _settings["SHOW_NUMBER_LINE"]
 SHOW_LINE_INDICATOR = _settings["SHOW_LINE_INDICATOR"]
+MAX_COLS_ENABLED = _settings["MAX_COLS_ENABLED"]
 MAX_COLS = _settings["MAX_COLS"]
 INDENT_WITH_TABS = _settings["INDENT_WITH_TABS"]
 TAB_SIZE = _settings["TAB_SIZE"]

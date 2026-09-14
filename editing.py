@@ -11,13 +11,16 @@ QUOTE_CHARACTERS = {"'", '"'}
 UNDO_HISTORY_LIMIT = 1000
 
 
-def _indent_unit():
+def _indent_unit(file_name):
     """One level of new indentation, per ~/.minirc's INDENT_WITH_TABS
-    and TAB_SIZE: a tab character, or TAB_SIZE spaces. Only decides
-    what gets *added* for a new indent level - carrying over a line's
-    *existing* indentation (whatever mix of characters it already
-    has) is handled separately, verbatim, by `_leading_whitespace`."""
-    return "\t" if theme.INDENT_WITH_TABS else " " * theme.TAB_SIZE
+    and TAB_SIZE - or `file_name`'s own [filetype:.ext] override of
+    either, if it has one: a tab character, or TAB_SIZE spaces. Only
+    decides what gets *added* for a new indent level - carrying over
+    a line's *existing* indentation (whatever mix of characters it
+    already has) is handled separately, verbatim, by
+    `_leading_whitespace`."""
+    settings = theme.settings_for(file_name)
+    return "\t" if settings["INDENT_WITH_TABS"] else " " * settings["TAB_SIZE"]
 
 
 class BufferEditMixin:
@@ -240,7 +243,7 @@ class BufferEditMixin:
             and after and after[0] == BRACKET_PAIRS[before[-1]]
         )
         if between_brackets:
-            inner_indent = indent + _indent_unit()
+            inner_indent = indent + _indent_unit(self.file_name)
             self.lines[self.line] = before
             self.lines.insert(self.line + 1, inner_indent)
             self.lines.insert(self.line + 2, indent + after)
@@ -248,7 +251,7 @@ class BufferEditMixin:
             self.column = len(inner_indent)
             return
         if before.rstrip().endswith(":"):
-            indent += _indent_unit()
+            indent += _indent_unit(self.file_name)
         self.lines[self.line] = before
         self.lines.insert(self.line + 1, indent + after)
         self.line += 1

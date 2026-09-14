@@ -90,6 +90,7 @@ class TextEditor(
         self._import_members_cache = {}
         self._import_broken_cache = {}
         self._jedi_attribute_cache = {}
+        self._elastic_width_cache = {}
         self._line_word_cache = {}
         self._word_pool_static = frozenset()
         self._word_pool_static_sorted = []
@@ -318,7 +319,7 @@ class TextEditor(
                         if self.suggestion_matches:
                             self._accept_highlighted_suggestion()
                         else:
-                            self._insert(_indent_unit())
+                            self._insert(_indent_unit(self.file_name))
                     elif (
                         self.mode == "insert"
                         and len(key) == 1

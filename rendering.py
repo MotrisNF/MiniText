@@ -19,28 +19,20 @@ def _no_highlight(text, lookahead=""):
     return text
 
 
-def _wrap_points(text, content_width):
-    """Raw string indices where `text` should be split so each
-    resulting piece's *display* width (tabs expanded to TAB_SIZE
-    columns) fits within `content_width` - always at least one
-    split point at 0 and one at len(text), even for an empty line or
-    one that already fits with no wrapping needed at all."""
-    if content_width <= 0:
-        return [0, len(text)]
-    points = [0]
-    display_column = 0
-    for index, character in enumerate(text):
-        char_width = theme.TAB_SIZE if character == "\t" else 1
-        if display_column + char_width > content_width and display_column > 0:
-            points.append(index)
-            display_column = 0
-        display_column += char_width
-    points.append(len(text))
-    return points
-
-
-def _line_row_count(text, content_width):
-    return len(_wrap_points(text, content_width)) - 1
+def _inline_tab_positions(line):
+    """(leading_end, tab_indices): `leading_end` is where `line`'s own
+    leading whitespace stops (a tab before it is plain indentation,
+    not part of any alignment); `tab_indices` are every tab at or
+    after that point - the "elastic tabstops" cell separators (see
+    ElasticTabstopsMixin's own docstring). A cell's content never
+    contains a tab itself, by construction: every tab in the line
+    from `leading_end` on is already accounted for as a separator."""
+    leading_end = len(line) - len(line.lstrip(" \t"))
+    tab_indices = [
+        index for index in range(leading_end, len(line))
+        if line[index] == "\t"
+    ]
+    return leading_end, tab_indices
 
 
 class RenderMixin:
@@ -65,9 +57,126 @@ class RenderMixin:
         separator = f"{theme.LINE_NUMBER_COLOR}│{theme.BASE_STYLE}"
         return separator.join(segments)
 
-    @staticmethod
-    def _display_text(text):
-        return text.replace("\t", " " * theme.TAB_SIZE)
+    def _elastic_block_bounds(self, line_index, column_index):
+        """The maximal contiguous run of lines around `line_index`
+        that all have a tab at cell-separator index `column_index` -
+        the vertical group whose cell `column_index` must share one
+        display width, "elastic tabstops" style: type the same kind
+        of line below another (another tab at the same cell index) and
+        the group - and its width - grows to include it; a line
+        without one (blank, differently-shaped, or a gap) ends the
+        group there, same as a real elastic-tabstops implementation."""
+        start = line_index
+        while (
+            start > 0
+            and len(_inline_tab_positions(self.lines[start - 1])[1])
+            > column_index
+        ):
+            start -= 1
+        end = line_index
+        while (
+            end + 1 < len(self.lines)
+            and len(_inline_tab_positions(self.lines[end + 1])[1])
+            > column_index
+        ):
+            end += 1
+        return start, end
+
+    def _elastic_cell_target_width(self, line_index, column_index):
+        """Display width cell `column_index` (0-indexed: the text
+        between the (column_index-1)-th and column_index-th tab, or
+        the line's own indentation and the first tab for column 0)
+        should be padded to on `line_index` - the widest such cell
+        among every line in its block (see `_elastic_block_bounds`),
+        plus one column of guaranteed spacing so cells never touch
+        even when one of them is already the widest. Cached for the
+        rest of this render() call only (cleared at the top of it) -
+        every line in the block gets the same answer written at once,
+        so a neighbor within it never repeats the same up/down scan."""
+        cache_key = (line_index, column_index)
+        if cache_key in self._elastic_width_cache:
+            return self._elastic_width_cache[cache_key]
+        start, end = self._elastic_block_bounds(line_index, column_index)
+        widest = 0
+        for index in range(start, end + 1):
+            leading_end, tabs = _inline_tab_positions(self.lines[index])
+            cell_start = (
+                leading_end if column_index == 0
+                else tabs[column_index - 1] + 1
+            )
+            widest = max(widest, tabs[column_index] - cell_start)
+        target = widest + 1
+        for index in range(start, end + 1):
+            self._elastic_width_cache[(index, column_index)] = target
+        return target
+
+    def _character_display_width(self, line_index, raw_index):
+        """Display width of the character at `self.lines[line_index]
+        [raw_index]` - 1 for anything but a tab; a tab's own width is
+        `TAB_SIZE` (per the file's own resolved settings) for a
+        leading, purely-indenting one, or whatever's needed to reach
+        its elastic-tabstop cell's target width for one used to
+        separate cells later in the line."""
+        line = self.lines[line_index]
+        if line[raw_index] != "\t":
+            return 1
+        leading_end, tabs = _inline_tab_positions(line)
+        if raw_index < leading_end:
+            return theme.settings_for(self.file_name)["TAB_SIZE"]
+        column_index = tabs.index(raw_index)
+        cell_start = (
+            leading_end if column_index == 0 else tabs[column_index - 1] + 1
+        )
+        target = self._elastic_cell_target_width(line_index, column_index)
+        return target - (raw_index - cell_start)
+
+    def _display_text(self, text, line_index=None, raw_start=0):
+        """`text` with every tab expanded to the right number of
+        spaces for how it's actually displayed. `line_index` (with
+        `raw_start`, `text`'s own starting offset within
+        `self.lines[line_index]`) is what makes an inline tab's width
+        elastic - real buffer content always passes both; synthetic,
+        program-generated text that isn't really at any position in
+        the buffer (autocomplete's own ghost text, namely) omits them
+        and falls back to a flat TAB_SIZE-per-tab expansion instead,
+        which is never wrong for text that was never typed and so
+        was never part of any elastic-tabstop cell to begin with."""
+        if line_index is None:
+            return text.replace("\t", " " * theme.TAB_SIZE)
+        pieces = []
+        for offset, character in enumerate(text):
+            if character == "\t":
+                width = self._character_display_width(
+                    line_index, raw_start + offset
+                )
+                pieces.append(" " * width)
+            else:
+                pieces.append(character)
+        return "".join(pieces)
+
+    def _wrap_points(self, line_index, content_width):
+        """Raw string indices where this line should be split so each
+        resulting piece's *display* width fits within `content_width`
+        - always at least one split point at 0 and one at len(text),
+        even for an empty line or one that already fits with no
+        wrapping needed at all."""
+        text = self.lines[line_index]
+        if content_width <= 0:
+            return [0, len(text)]
+        points = [0]
+        display_column = 0
+        for index in range(len(text)):
+            char_width = self._character_display_width(line_index, index)
+            fits = display_column + char_width <= content_width
+            if not fits and display_column > 0:
+                points.append(index)
+                display_column = 0
+            display_column += char_width
+        points.append(len(text))
+        return points
+
+    def _line_row_count(self, line_index, content_width):
+        return len(self._wrap_points(line_index, content_width)) - 1
 
     def _matching_bracket_position(self):
         line = self.lines[self.line]
@@ -148,7 +257,8 @@ class RenderMixin:
         return None
 
     def _render_segment(
-        self, text_segment, absolute_start, bracket_column, apply_highlight
+        self, line_index, text_segment, absolute_start, bracket_column,
+        apply_highlight,
     ):
         if (
             bracket_column is not None
@@ -160,17 +270,27 @@ class RenderMixin:
             bracket_character = text_segment[local_index]
             after = text_segment[local_index + 1:]
             return (
-                apply_highlight(self._display_text(before), bracket_character)
+                apply_highlight(
+                    self._display_text(before, line_index, absolute_start),
+                    bracket_character,
+                )
                 + theme.BRACKET_MATCH_START
-                + self._display_text(bracket_character)
+                + self._display_text(
+                    bracket_character, line_index, bracket_column,
+                )
                 + theme.BRACKET_MATCH_END
-                + apply_highlight(self._display_text(after))
+                + apply_highlight(self._display_text(
+                    after, line_index, bracket_column + 1,
+                ))
             )
-        return apply_highlight(self._display_text(text_segment))
+        return apply_highlight(
+            self._display_text(text_segment, line_index, absolute_start)
+        )
 
     def _render_wrapped_segment(
-        self, text, seg_start, seg_end, is_last_segment, is_current_line,
-        selection_range, bracket_column, apply_highlight, suggestion,
+        self, line_index, text, seg_start, seg_end, is_last_segment,
+        is_current_line, selection_range, bracket_column, apply_highlight,
+        suggestion,
     ):
         """One wrap row's worth of colored/escaped content for
         `text[seg_start:seg_end]` - the same selection/suggestion/
@@ -188,15 +308,15 @@ class RenderMixin:
         if is_current_line and suggestion and cursor_in_segment:
             return (
                 self._render_segment(
-                    text[seg_start:self.column], seg_start, bracket_column,
-                    apply_highlight,
+                    line_index, text[seg_start:self.column], seg_start,
+                    bracket_column, apply_highlight,
                 )
                 + theme.SUGGESTION_COLOR
                 + self._display_text(suggestion)
                 + theme.SUGGESTION_RESET
                 + self._render_segment(
-                    text[self.column:seg_end], self.column, bracket_column,
-                    apply_highlight,
+                    line_index, text[self.column:seg_end], self.column,
+                    bracket_column, apply_highlight,
                 )
             )
         if selection_range is not None:
@@ -206,22 +326,22 @@ class RenderMixin:
             if clipped_start < clipped_end:
                 return (
                     self._render_segment(
-                        text[seg_start:clipped_start], seg_start,
+                        line_index, text[seg_start:clipped_start], seg_start,
                         bracket_column, apply_highlight,
                     )
                     + theme.SELECTION_START
                     + self._render_segment(
-                        text[clipped_start:clipped_end], clipped_start,
-                        bracket_column, apply_highlight,
+                        line_index, text[clipped_start:clipped_end],
+                        clipped_start, bracket_column, apply_highlight,
                     )
                     + theme.SELECTION_END
                     + self._render_segment(
-                        text[clipped_end:seg_end], clipped_end,
+                        line_index, text[clipped_end:seg_end], clipped_end,
                         bracket_column, apply_highlight,
                     )
                 )
         return self._render_segment(
-            text[seg_start:seg_end], seg_start, bracket_column,
+            line_index, text[seg_start:seg_end], seg_start, bracket_column,
             apply_highlight,
         )
 
@@ -291,6 +411,14 @@ class RenderMixin:
         if self.help_mode:
             self._render_help()
             return
+        # Elastic-tabstop cell widths are only ever valid for the
+        # render they were computed in - a single keystroke anywhere
+        # in a block can change every line's width in it, and this is
+        # the simplest way to never render a stale one: throw the
+        # whole thing away and let it be rebuilt, lazily, as this
+        # render's own lookups need it.
+        self._elastic_width_cache = {}
+        file_settings = theme.settings_for(self.file_name)
         number_width = len(str(len(self.lines)))
         tab_bar = self._tab_bar_line()
         terminal_size = _get_terminal_size()
@@ -375,7 +503,7 @@ class RenderMixin:
             if wrap_line_index >= len(self.lines):
                 ran_out_of_lines = True
                 break
-            points = _wrap_points(self.lines[wrap_line_index], content_width)
+            points = self._wrap_points(wrap_line_index, content_width)
             segment_count = len(points) - 1
             for segment_index in range(segment_count):
                 row_descriptors.append((
@@ -503,13 +631,13 @@ class RenderMixin:
                     else None
                 )
                 displayed = self._render_wrapped_segment(
-                    text, seg_start, seg_end, is_last_segment,
+                    index, text, seg_start, seg_end, is_last_segment,
                     is_current_line, selection_range, bracket_column,
                     apply_highlight, suggestion,
                 )
                 editor_row = f"{marker}{number}{displayed}"
                 if is_first_segment:
-                    display_length = len(self._display_text(text))
+                    display_length = len(self._display_text(text, index))
                     include_match = (
                         _INCLUDE_LINE_PATTERN.match(text)
                         if language in ("c", "cpp") else None
@@ -525,20 +653,21 @@ class RenderMixin:
                         language == "python"
                         and self._import_line_broken(text, python_path)
                     )
-                    if (
-                        missing_include or broken_import
-                        or display_length > theme.MAX_COLS
-                    ):
+                    too_long = (
+                        file_settings["MAX_COLS_ENABLED"]
+                        and display_length > file_settings["MAX_COLS"]
+                    )
+                    if missing_include or broken_import or too_long:
                         error_column = editor_col_offset + 1
                         ruler_overlay.append(
                             f"\x1b[{2 + row_offset};{error_column}H"
                             f"{theme.LINE_LENGTH_ERROR_COLOR}●"
                             f"{theme.BASE_STYLE}"
                         )
-                    else:
+                    elif file_settings["MAX_COLS_ENABLED"]:
                         ruler_column = (
                             editor_col_offset + gutter_width + 1
-                            + theme.MAX_COLS
+                            + file_settings["MAX_COLS"]
                         )
                         if ruler_column <= terminal_width:
                             ruler_overlay.append(
@@ -629,7 +758,8 @@ class RenderMixin:
             cursor_column = (
                 editor_col_offset + gutter_width + 1
                 + len(self._display_text(
-                    self.lines[self.line][cursor_seg_start:self.column]
+                    self.lines[self.line][cursor_seg_start:self.column],
+                    self.line, cursor_seg_start,
                 ))
             )
         elif self.command is not None:
@@ -657,7 +787,7 @@ class RenderMixin:
             self.viewport_top = self.line
             return
         rows_needed = sum(
-            _line_row_count(self.lines[index], content_width)
+            self._line_row_count(index, content_width)
             for index in range(self.viewport_top, self.line + 1)
         )
         # Doesn't fit from the current viewport_top - slide it forward
@@ -668,7 +798,7 @@ class RenderMixin:
         # if that one line alone still doesn't fit the whole screen -
         # its own first rows are still the right thing to show.
         while rows_needed > visible_rows and self.viewport_top < self.line:
-            rows_needed -= _line_row_count(
-                self.lines[self.viewport_top], content_width
+            rows_needed -= self._line_row_count(
+                self.viewport_top, content_width
             )
             self.viewport_top += 1

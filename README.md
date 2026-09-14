@@ -153,7 +153,18 @@ usable as a general-purpose text editor for anything else.
   `:lint` runs `flake8` and `mypy` on it the same way.
 - A configurable line-length ruler (`MAX_COLS`, default 79 - flake8's
   own default) drawn on every line that doesn't already reach it;
-  going past it anyway marks that line with a `●` in the gutter.
+  going past it anyway marks that line with a `●` in the gutter. Can
+  be turned off entirely (`MAX_COLS_ENABLED=False`) or overridden per
+  file extension, along with `INDENT_WITH_TABS`/`TAB_SIZE`, through an
+  open-ended `[filetype:.ext]` dictionary in `~/.minirc` - see
+  "Configuration" below.
+- Elastic tabstops: a tab typed after a line's own indentation lines
+  up, purely visually, with the same tab on every adjacent line that
+  has one in the same position - `int` + `Tab` + `c;` above `size_t` +
+  `Tab` + `l;` renders as a neatly aligned two-column table, and stays
+  aligned as lines are added, removed, or edited. See "Configuration"
+  below for the details and one real interaction with Insert mode's
+  autocompletion worth knowing about.
 - A line too long for the terminal's width soft-wraps onto as many
   extra screen rows as it takes, instead of overflowing into the next
   row at column 1 (the terminal's own doing, not Mini's, and the
@@ -468,6 +479,7 @@ Mini introduces after an update, if your file doesn't have it yet
 THEME=base
 SHOW_NUMBER_LINE=True
 SHOW_LINE_INDICATOR=True
+MAX_COLS_ENABLED=True
 MAX_COLS=79
 INDENT_WITH_TABS=False
 TAB_SIZE=4
@@ -496,6 +508,11 @@ COMMENT_COLOR=108
 
 [light]
 ...
+
+[filetype:.js]
+MAX_COLS=100
+INDENT_WITH_TABS=False
+TAB_SIZE=2
 ```
 
 - `THEME` selects the active section: `base`, `dark`, `light`, or any
@@ -510,7 +527,11 @@ COMMENT_COLOR=108
   where its line number/marker would be, instead of the ruler - the
   same marker a C/C++ file's own unresolved `#include` gets, and a
   `.py` file's own broken `import`/`from ... import ...` line, all in
-  that same spot.
+  that same spot. `MAX_COLS_ENABLED` (default `True`) turns both the
+  ruler and the length flagging off entirely when set to `False` -
+  the `●` marker for a broken `#include`/import still shows either
+  way, since that's a different check with nothing to do with a
+  line's length.
 - `INDENT_WITH_TABS` (default `False`) picks what auto-indent, the
   bracket-splitting Enter, and the Tab key insert for one new level
   of indentation: a tab character (`True`) or `TAB_SIZE` spaces
@@ -518,7 +539,17 @@ COMMENT_COLOR=108
   existing leading whitespace, whatever it already is, is always
   carried over verbatim by Enter. `TAB_SIZE` (default `4`) is also
   how wide an actual tab character displays as, wherever one appears
-  in a line (typed, pasted, or already in a file you opened).
+  in a line (typed, pasted, or already in a file you opened) - except
+  an inline (non-leading) one; see "Elastic tabstops" below.
+- A `[filetype:.ext]` section (the extension, dot included - `.js`,
+  `.rs`, whatever you want) overrides `MAX_COLS_ENABLED`/`MAX_COLS`/
+  `INDENT_WITH_TABS`/`TAB_SIZE` for files with that extension - only
+  the keys it actually sets; anything it leaves out still falls back
+  to the plain top-level default above. This is a fully open,
+  user-extensible dictionary, not a fixed list of "known" languages:
+  add a `[filetype:.ext]` section for any extension you want your own
+  settings for, and delete one to go back to the default - Mini
+  itself never writes one for you.
 - Every color is an xterm 256-color palette number (0-255); a chart
   such as <https://www.ditig.com/256-colors-cheat-sheet> is a
   convenient reference. `RULER_COLOR` and `LINE_LENGTH_ERROR_COLOR`
@@ -527,7 +558,45 @@ COMMENT_COLOR=108
 If a value in `~/.minirc` is missing or invalid, Mini falls back to
 `~/.minirc.bak` (a copy of the last known-good configuration), and
 finally to its built-in defaults, so a mistake while editing the file
-never prevents the editor from starting.
+never prevents the editor from starting. A `[filetype:...]` section
+follows the same rule key-by-key: an invalid value for one of its
+keys is simply left out, falling back to the top-level default for
+that key alone, without affecting the section's other keys.
+
+### Elastic tabstops
+
+A tab character typed *after* a line's own indentation - not one of
+the leading tabs/spaces that make up the indentation itself, one
+later in the line - is treated as a column separator rather than
+plain whitespace, "elastic tabstops" style: it's padded, purely for
+display (the buffer still stores one literal tab character, never
+real spaces), to line up with the same separator on every
+vertically-adjacent line that also has one at that same position.
+Typing `int` + `Tab` + `c;`, then `size_t` + `Tab` + `l;` on the next
+line, renders as:
+
+```
+int    c;
+size_t l;
+```
+
+Add a third, wider line the same way and the whole block re-aligns to
+fit it - no manual re-alignment, ever. A line with no tab there (or a
+blank line) ends the block; anything below it starts a new one. Only
+that first separator has to line up for a whole line to become part
+of one - it works the same way with two or more separators per line,
+each column aligning independently of the others. Leading
+(indentation) tabs are never affected - those still expand to
+`TAB_SIZE` columns exactly as before, whether or not the line also has
+elastic ones later on.
+
+One real interaction to know about: `Tab` in Insert mode accepts the
+current autocompletion suggestion when one is showing (see "Key
+reference" below), *before* it ever inserts a literal tab character.
+`int` alone already matches `int8_t`/`int16_t`/.../`intptr_t`, so
+`Tab` right after typing it completes to one of those instead of
+inserting the separator - press `Esc` first to dismiss the dropdown,
+*then* `Tab`, to actually get the tab character in a case like that.
 
 ## Project structure
 
@@ -557,6 +626,15 @@ never prevents the editor from starting.
 
 Mini is intentionally small. Some notable limitations:
 
+- Elastic tabstops (see "Configuration") have no notion of strings or
+  comments: a tab inside either of those is still treated as a column
+  separator like any other, same as everything else here that colors
+  or completes one line at a time without deeper parsing. A block's
+  width is also recomputed from scratch on every single render with
+  no cross-render cache, which is unnoticeable for the small,
+  deliberate tables this feature is actually meant for, but means an
+  unusually large single block (thousands of aligned lines) would
+  cost more per keystroke than a typical file does.
 - Syntax highlighting and autocompletion only apply to `.py`,
   `.c`/`.h`, and `.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files - a
   `.h` file is always treated as C, never C++, since there's no

@@ -5,6 +5,35 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.6.0 - 2026-09-15
+
+- Added elastic tabstops: a tab typed after a line's own indentation
+  now lines up, purely visually (the buffer still stores one literal
+  tab character, never real spaces), with the same tab on every
+  vertically-adjacent line that has one in the same position -
+  `int` + `Tab` + `c;` above `size_t` + `Tab` + `l;` renders as a
+  neatly aligned two-column table, re-aligning itself as lines are
+  added, removed, or edited. A line without a tab there ends the
+  block. Leading (indentation) tabs are unaffected, still expanding to
+  `TAB_SIZE` columns exactly as before.
+- Added `MAX_COLS_ENABLED` to `~/.minirc` (default `True`): turns the
+  `MAX_COLS` ruler and its `●` too-long marker off entirely when set
+  to `False`. The `●` marker a broken `#include`/`import` line gets is
+  unaffected either way - unrelated check, same marker.
+- Added an open-ended `[filetype:.ext]` dictionary to `~/.minirc`:
+  overrides `MAX_COLS_ENABLED`/`MAX_COLS`/`INDENT_WITH_TABS`/
+  `TAB_SIZE` for files with that extension, only for the keys a
+  section actually sets - anything it leaves out still falls back to
+  the plain top-level default. Entirely user-managed: add a
+  `[filetype:.ext]` section for any extension you want your own
+  settings for (not limited to the languages Mini highlights), remove
+  one to go back to the default. An existing `~/.minirc` gets
+  `MAX_COLS_ENABLED` added automatically on the next `mini --update`/
+  reinstall, the same way any other new setting already is; the new
+  dictionary itself needs nothing added, since an empty one (no
+  `[filetype:...]` sections at all) is already its correct default
+  state.
+
 ## 1.5.0 - 2026-09-14
 
 - `:lint` now falls back to `flake8`/`mypy` bundled in Mini's own
