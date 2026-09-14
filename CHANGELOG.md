@@ -5,6 +5,10 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Added `:cmd <text>`, running `text` as a `bash -c` command in the
+  same output panel as `:run`/`:lint` (Ctrl+C, scrolling, and all).
+  Unlike `:run`/`:lint`, it never forces a save of the current buffer
+  and doesn't require it to have a file at all.
 - The `:run`/`:lint` output panel can now be scrolled independently of
   the live output (`Up`/`Down` a line at a time, `Ctrl+Up`/`Ctrl+Down`
   a page at a time) instead of only ever showing the tail end, and it

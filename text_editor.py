@@ -805,6 +805,7 @@ class TextEditor:
             "           Ctrl+Up/Down scroll its output)\r\n",
             "  :lint    Run flake8 + mypy on this file, same output\r\n",
             "           panel as :run; deletes .mypy_cache afterward\r\n",
+            "  :cmd <text>  Run text as a bash command, same panel\r\n",
             "  Worktree: Up/Down or j/k move, l expands a directory,\r\n",
             "    h collapses it, Enter opens a file as a tab\r\n",
             "    (or switches to it if already open) or\r\n",
@@ -1818,18 +1819,24 @@ class TextEditor:
         env["PATH"] = bin_directory + os.pathsep + env.get("PATH", "")
         return env
 
-    def _start_process(self, command, label, env=None):
+    def _start_process(self, command, label, env=None, cwd=None,
+                        save_first=True):
         """Runs `command` in a pty, streaming its output live into the
-        same panel `:run`/`:terminal` uses - shared by `:lint` too, so
-        both get live output, Ctrl+C, and Esc-to-close for free.
-        `env`, when given, replaces the child's environment (used to
-        put a virtualenv's own bin/ directory first on PATH)."""
+        same panel `:run`/`:terminal` uses - shared by `:lint` and
+        `:cmd` too, so all three get live output, Ctrl+C, scrolling,
+        and Esc-to-close for free. `env`, when given, replaces the
+        child's environment (used to put a virtualenv's own bin/
+        directory first on PATH). `cwd`, when given, overrides the
+        default of running next to the current file. `save_first`
+        skips the current-file save (and the prompt for a name if it
+        has none) for `:cmd`, which need not be about this file at
+        all."""
         global _run_output_fd
         if self.run_process is not None and self.run_process.poll() is None:
             self.run_focused = True
             self.status = "A run is already in progress"
             return
-        if self.modified or self.file_name is None:
+        if save_first and (self.modified or self.file_name is None):
             if not self._save():
                 return
         master_fd, slave_fd = pty.openpty()
@@ -1837,7 +1844,9 @@ class TextEditor:
             process = subprocess.Popen(
                 command,
                 stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
-                cwd=os.path.dirname(self.file_name) or ".",
+                cwd=cwd if cwd is not None else (
+                    os.path.dirname(self.file_name) or "."
+                ),
                 close_fds=True,
                 preexec_fn=_reset_child_signals,
                 env=env,
@@ -1877,6 +1886,29 @@ class TextEditor:
         self._start_process(
             ["sh", "-c", shell_command], "lint",
             env=self._environment_for(python_path),
+        )
+
+    def _start_cmd(self, shell_text):
+        """`:cmd <text>` - runs `text` as a bash command in the same
+        output panel as :run/:lint, for anything that isn't about
+        running the current file itself (installing a dependency,
+        listing a directory, activating a venv for that one command,
+        ...). Unlike :run/:lint, it never forces a save of the current
+        buffer - :cmd need not have anything to do with it - and runs
+        next to the file being edited if there is one, or at the
+        worktree root otherwise."""
+        if not shell_text:
+            self.status = "Usage: :cmd <shell command>"
+            return
+        cwd = (
+            os.path.dirname(os.path.abspath(self.file_name))
+            if self.file_name else self.worktree_root
+        )
+        python_path = self._resolve_python_executable()
+        self._start_process(
+            ["bash", "-c", shell_text], shell_text,
+            env=self._environment_for(python_path),
+            cwd=cwd, save_first=False,
         )
 
     def _pump_run_output(self):
@@ -2221,6 +2253,12 @@ class TextEditor:
         self.mode = "visual"
         if command in ("w!", "q!", "wq!", "qw!"):
             self._execute_forced_command(command[:-1])
+            return
+        if command == "cmd" or command.startswith("cmd "):
+            # Free-form text after "cmd " - never matches
+            # _parse_command's name/line-number pattern, so it has to
+            # be pulled out before that runs.
+            self._start_cmd(command[len("cmd"):].strip())
             return
         name, argument = self._parse_command(command)
         if name == "w" and argument is None:

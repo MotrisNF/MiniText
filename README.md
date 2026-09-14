@@ -227,6 +227,7 @@ actually brings.
 | `:tree`       | Toggle the worktree panel's visibility                |
 | `:run`        | Run this file and show its output below the code (also `:terminal`) |
 | `:lint`       | Run flake8 + mypy on this file, output shown the same way |
+| `:cmd <text>` | Run `text` as a bash command, output shown the same way |
 | `:help`       | Show the in-editor help screen                       |
 
 ### Running a file
@@ -268,6 +269,18 @@ whatever's on the system `PATH`.
 same output panel (so it's Ctrl+C-able and closes with `Esc` the same
 way), deleting `.mypy_cache` once both finish. Needs `flake8` and
 `mypy` on your `PATH` - Mini doesn't install or bundle either.
+
+`:cmd <text>` runs `text` as a `bash -c` command in that same panel -
+for anything that isn't about running the current file itself
+(installing a dependency, listing a directory, activating a venv for
+that one command, ...). It never saves or requires the current
+buffer to have a file at all: it runs next to the file being edited
+if there is one, or at the worktree root otherwise. Its subprocess's
+`PATH` gets the same virtualenv-first treatment as `:run`/`:lint`.
+Each `:cmd` is its own isolated process like `:run` is - nothing it
+does (`source some/venv/bin/activate` included) persists into a later
+`:run` or `:cmd`, since that process is already gone by the time the
+next one starts.
 
 ### Worktree panel
 
