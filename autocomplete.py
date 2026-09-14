@@ -184,6 +184,9 @@ def _is_inside_c_string_or_comment(line, column):
 
 
 _INCLUDE_PATTERN = re.compile(r'^\s*#\s*include\s+([<"])')
+_INCLUDE_LINE_PATTERN = re.compile(r'^\s*#\s*include\s+([<"])([^>"]+)[>"]')
+
+_compiler_include_dirs_cache = {}
 
 
 def _compiler_include_dirs(cpp):
@@ -192,29 +195,69 @@ def _compiler_include_dirs(cpp):
     same `-Wp,-v` trick `gcc`/`clang` themselves document) instead of
     guessing a fixed path - the same "introspect the real thing"
     philosophy as Python's module completion, one layer down (the
-    compiler instead of the interpreter)."""
-    compiler = (
-        shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
-    )
-    if not compiler:
-        return []
-    try:
-        result = subprocess.run(
-            [compiler, "-E", "-Wp,-v", "-x", "c++" if cpp else "c", "-"],
-            input="", capture_output=True, text=True, timeout=3,
+    compiler instead of the interpreter). This never changes
+    mid-session, so the actual subprocess call only ever happens
+    once per c/c++ distinction."""
+    if cpp not in _compiler_include_dirs_cache:
+        compiler = (
+            shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
         )
-    except (subprocess.TimeoutExpired, OSError):
-        return []
-    directories = []
-    capturing = False
-    for line in result.stderr.split("\n"):
-        if "search starts here" in line:
-            capturing = True
-        elif line.startswith("End of search list"):
-            break
-        elif capturing:
-            directories.append(line.strip())
-    return [d for d in directories if os.path.isdir(d)]
+        directories = []
+        if compiler:
+            try:
+                lang = "c++" if cpp else "c"
+                result = subprocess.run(
+                    [compiler, "-E", "-Wp,-v", "-x", lang, "-"],
+                    input="", capture_output=True, text=True, timeout=3,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                result = None
+            if result is not None:
+                capturing = False
+                for line in result.stderr.split("\n"):
+                    if "search starts here" in line:
+                        capturing = True
+                    elif line.startswith("End of search list"):
+                        break
+                    elif capturing:
+                        directories.append(line.strip())
+        _compiler_include_dirs_cache[cpp] = [
+            d for d in directories if os.path.isdir(d)
+        ]
+    return _compiler_include_dirs_cache[cpp]
+
+
+def _resolve_system_header_path(header_name, cpp):
+    """The real file path `#include <header_name>` would pull in, or
+    None if it can't be found in the compiler's own include
+    directories (no compiler on PATH, or a header name that isn't
+    actually one of its real headers)."""
+    for directory in _compiler_include_dirs(cpp):
+        candidate = os.path.join(directory, header_name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+_header_word_cache = {}
+
+
+def _header_words(path):
+    """Identifier-like words found anywhere in the header at `path` -
+    the same word-based idea as everything else in C/C++ completion
+    here, just reaching into a file named by #include instead of
+    only the buffer being edited. A header's content never changes
+    mid-session (from Mini's own perspective - nothing here ever
+    writes to it), so each one is only ever read and scanned once."""
+    if path not in _header_word_cache:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as file:
+                text = file.read()
+        except OSError:
+            _header_word_cache[path] = frozenset()
+        else:
+            _header_word_cache[path] = frozenset(_WORD_PATTERN.findall(text))
+    return _header_word_cache[path]
 
 
 _system_header_cache = {}
@@ -389,14 +432,35 @@ class SuggestionMixin:
 
     def _rebuild_static_word_pool(self):
         words = set()
+        language = language_for(self.file_name)
+        collect_includes = language in ("c", "cpp")
+        include_words = set()
+        directory = (
+            os.path.dirname(self.file_name) if self.file_name else ""
+        ) or os.getcwd()
         for index, line in enumerate(self.lines):
             if index != self.line:
                 words |= self._line_words(line)
+            if collect_includes:
+                match = _INCLUDE_LINE_PATTERN.match(line)
+                if match:
+                    opening, header_name = match.group(1), match.group(2)
+                    if opening == '"':
+                        path = os.path.join(directory, header_name)
+                        if os.path.isfile(path):
+                            include_words |= _header_words(path)
+                    else:
+                        path = _resolve_system_header_path(
+                            header_name, language == "cpp"
+                        )
+                        if path:
+                            include_words |= _header_words(path)
         self._word_pool_static = words
         # Sorted once here, not on every keystroke: lets
         # _buffer_words_matching find a prefix's matches by binary
         # search instead of scanning every unique word in the file.
         self._word_pool_static_sorted = sorted(words)
+        self._included_header_words_sorted = sorted(include_words)
         self._word_pool_lines_ref = self.lines
         self._word_pool_line_count = len(self.lines)
         self._word_pool_line_index = self.line
@@ -408,6 +472,19 @@ class SuggestionMixin:
             or self.line != self._word_pool_line_index
         ):
             self._rebuild_static_word_pool()
+
+    def _included_header_words_matching(self, prefix):
+        """Words found in every header this buffer's own #include
+        directives name (both local "..." ones and real system <...>
+        ones, resolved the same way #include completion itself
+        finds them), starting with `prefix` - refreshed on the same
+        schedule as the buffer's own word pool, via the same binary
+        search over a cached sorted list."""
+        self._ensure_word_pool_fresh()
+        sorted_words = self._included_header_words_sorted
+        low = bisect.bisect_left(sorted_words, prefix)
+        high = bisect.bisect_left(sorted_words, prefix + "\uffff")
+        return set(sorted_words[low:high])
 
     def _collect_buffer_words(self):
         """Every identifier-like word used anywhere in the buffer, for
@@ -683,11 +760,22 @@ class SuggestionMixin:
 
     def _compute_c_suggestion_matches(self, language):
         """C/C++'s much simpler counterpart to
-        _compute_python_suggestion_matches: word/keyword completion,
-        plus `#include <...>`/`#include "..."` offering real header
-        names instead - no type inference, no `self.`/`->` awareness,
-        no macro expansion."""
+        _compute_python_suggestion_matches: word completion from the
+        buffer *and* from every header this file's own #include
+        directives name, plus C/C++'s own keyword vocabulary as a
+        final fallback; `#include <...>`/`#include "..."` themselves
+        offer real header names instead - no type inference, no
+        `self.`/`->` awareness, no macro expansion."""
         line = self.lines[self.line]
+        if _INCLUDE_LINE_PATTERN.match(line):
+            # Every branch below that can trigger while sitting on a
+            # complete #include line returns before ever reaching the
+            # word-pool machinery - so editing one never rebuilds it
+            # on its own. Force a rebuild next time it's actually
+            # needed (however much later that ends up being, even
+            # back on this exact same line index), in case what this
+            # line names just changed.
+            self._word_pool_line_index = -1
         if self.column < len(line) and _is_word_char(line[self.column]):
             return []
         # Checked before the generic inside-a-string test below: the
@@ -720,6 +808,7 @@ class SuggestionMixin:
         literals = CPP_LITERALS if language == "cpp" else set()
         for pool in (
             self._buffer_words_matching(prefix),
+            self._included_header_words_matching(prefix),
             vocabulary | type_names | literals,
         ):
             matches = sorted(

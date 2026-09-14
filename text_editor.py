@@ -91,6 +91,7 @@ class TextEditor(
         self._line_word_cache = {}
         self._word_pool_static = frozenset()
         self._word_pool_static_sorted = []
+        self._included_header_words_sorted = []
         self._word_pool_lines_ref = None
         self._word_pool_line_count = -1
         self._word_pool_line_index = -1

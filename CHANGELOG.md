@@ -5,7 +5,13 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
-- Triple-quoted Python strings (`"""..."""`/`'''...'''`) are now
+- Fixed C/C++ completion not looking inside a file's own `#include`s:
+  a name declared in a locally-included header (`#include "mine.h"`)
+  or a real system one (`#include <stdio.h>`) is now actually offered
+  while typing elsewhere in the file - previously `#include` itself
+  only ever offered header *names*, never what's declared inside
+  them. Each header is read and word-scanned the same way the
+  buffer's own words already are, cached for the rest of the session.
   colored as comments (`COMMENT_COLOR`) instead of as regular
   strings, matching how they're actually used - a docstring - far
   more often than not. Same single-line-only reach as everything

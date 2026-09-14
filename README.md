@@ -82,7 +82,13 @@ usable as a general-purpose text editor for anything else.
   "introspect the real thing" approach as Python's module
   completion, one layer down) - needing none of them just means this
   one specific case offers nothing, same as `:lint` without
-  `flake8`/`mypy` installed.
+  `flake8`/`mypy` installed. Beyond completing the `#include` line
+  itself, every header a file's own `#include`s name - local or
+  system, resolved the exact same way - actually gets read and
+  word-scanned too, so a name declared in one of them (`#include
+  "mine.h"` and it declares `mi_funcion`, or `#include <stdio.h>`
+  and `printf`) is offered while typing anywhere else in the file,
+  not just while completing the `#include` line.
 - Matching-bracket and matching-quote highlighting, for `()`, `[]`,
   `{}`, `'` and `"`, in either direction and across lines.
 - Auto-closing of brackets and quotes - only when the spot to the
@@ -547,3 +553,10 @@ Mini is intentionally small. Some notable limitations:
   Linux/Unix-only reach - and treats a directory literally named
   `.env` as a virtualenv too, even though that name is more commonly
   used for environment-variable files elsewhere.
+- A header's words, once read for completion, are cached for the
+  rest of the session - editing that header file in another tab (or
+  another program) isn't picked up until Mini is restarted. Removing
+  an `#include` line can also leave that header's words still being
+  offered for a little while: it's only actually forgotten the next
+  time something forces a rescan (typing elsewhere after leaving the
+  line the `#include` used to be on), not the instant it's deleted.
