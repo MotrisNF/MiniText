@@ -5,6 +5,13 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- An `#include` that doesn't actually resolve (a local header not
+  found next to the file, or a system one not found in the
+  compiler's own include directories) now gets the same `●` marker
+  `MAX_COLS` uses for an overly long line, in the same gutter spot.
+  Never shown for a `<...>` include with no `gcc`/`clang`/`cc` on
+  `PATH` at all, for the same reason `#include <...>` completion
+  itself already stays silent then.
 - Fixed C/C++ completion not looking inside a file's own `#include`s:
   a name declared in a locally-included header (`#include "mine.h"`)
   or a real system one (`#include <stdio.h>`) is now actually offered

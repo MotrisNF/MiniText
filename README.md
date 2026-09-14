@@ -88,7 +88,14 @@ usable as a general-purpose text editor for anything else.
   word-scanned too, so a name declared in one of them (`#include
   "mine.h"` and it declares `mi_funcion`, or `#include <stdio.h>`
   and `printf`) is offered while typing anywhere else in the file,
-  not just while completing the `#include` line.
+  not just while completing the `#include` line. An `#include` that
+  doesn't actually resolve - a local header not found next to the
+  file, or a system one not found in the compiler's own include
+  directories - gets the same `●` marker `MAX_COLS` uses for an
+  overly long line, in the same gutter spot. With no `gcc`/`clang`/
+  `cc` on `PATH` at all, a `<...>` include is never marked this way -
+  there'd be no way to tell "doesn't exist" apart from "can't check",
+  and marking every one would be worse than marking none.
 - Matching-bracket and matching-quote highlighting, for `()`, `[]`,
   `{}`, `'` and `"`, in either direction and across lines.
 - Auto-closing of brackets and quotes - only when the spot to the
@@ -440,7 +447,9 @@ COMMENT_COLOR=108
   reach it, so typing past it naturally overlaps and covers the ruler
   instead of the two fighting for the same spot. A line that's
   actually longer than `MAX_COLS` gets a `●` in `LINE_LENGTH_ERROR_COLOR`
-  where its line number/marker would be, instead of the ruler.
+  where its line number/marker would be, instead of the ruler - the
+  same marker a C/C++ file's own unresolved `#include` gets, in that
+  same spot.
 - `INDENT_WITH_TABS` (default `False`) picks what auto-indent, the
   bracket-splitting Enter, and the Tab key insert for one new level
   of indentation: a tab character (`True`) or `TAB_SIZE` spaces

@@ -7,7 +7,7 @@ import os
 import sys
 
 import theme
-from autocomplete import MAX_SUGGESTION_DROPDOWN_ITEMS
+from autocomplete import _INCLUDE_LINE_PATTERN, MAX_SUGGESTION_DROPDOWN_ITEMS
 from editing import BRACKET_PAIRS, CLOSING_TO_OPENING, QUOTE_CHARACTERS
 from highlighting import _highlight, _highlight_c, is_in_triple_quoted_string
 from languages import language_for
@@ -504,7 +504,18 @@ class RenderMixin:
                 editor_row = f"{marker}{number}{displayed}"
                 if is_first_segment:
                     display_length = len(self._display_text(text))
-                    if display_length > theme.MAX_COLS:
+                    include_match = (
+                        _INCLUDE_LINE_PATTERN.match(text)
+                        if language in ("c", "cpp") else None
+                    )
+                    missing_include = (
+                        include_match is not None
+                        and self._include_target_missing(
+                            include_match.group(1), include_match.group(2),
+                            language,
+                        )
+                    )
+                    if missing_include or display_length > theme.MAX_COLS:
                         error_column = editor_col_offset + 1
                         ruler_overlay.append(
                             f"\x1b[{2 + row_offset};{error_column}H"

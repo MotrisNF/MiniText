@@ -571,6 +571,26 @@ class SuggestionMixin:
                 names.add(entry.name)
         return names
 
+    def _include_target_missing(self, opening, header_name, language):
+        """Whether a #include names something that doesn't actually
+        resolve - a local header not found next to the file, or (only
+        when a compiler is actually available to ask) a system header
+        not found in its own include directories. With no compiler on
+        PATH at all, a <...> include is never flagged - there's no
+        way to tell "doesn't exist" apart from "just can't check"
+        then, and flagging every one would be worse than flagging
+        none, the same reasoning `#include <...>` completion itself
+        already follows."""
+        if opening == '"':
+            directory = (
+                os.path.dirname(self.file_name) if self.file_name else ""
+            ) or os.getcwd()
+            return not os.path.isfile(os.path.join(directory, header_name))
+        cpp = language == "cpp"
+        if not _compiler_include_dirs(cpp):
+            return False
+        return _resolve_system_header_path(header_name, cpp) is None
+
     def _module_member_names(self, module_name):
         directory = (
             os.path.dirname(self.file_name) if self.file_name else ""
