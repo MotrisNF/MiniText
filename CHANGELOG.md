@@ -3,6 +3,15 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## Unreleased
+
+- The `:run`/`:lint` output panel can now be scrolled independently of
+  the live output (`Up`/`Down` a line at a time, `Ctrl+Up`/`Ctrl+Down`
+  a page at a time) instead of only ever showing the tail end, and it
+  keeps up to 10000 lines instead of 2000. Scrolling up freezes the
+  view in place as more output arrives below it (`tail -f`-style);
+  scrolling back down to the bottom resumes following it live.
+
 ## 1.1.0 - 2026-09-14
 
 - `:run` and `:lint` now use a project's own virtualenv instead of

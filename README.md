@@ -238,6 +238,23 @@ works: type while the panel is focused and press Enter, exactly like
 a normal terminal. Ctrl+C sends an interrupt to the running program
 (it does not affect Mini itself).
 
+`Esc` unfocuses the panel while the program is still running, leaving
+it going in the background - the output keeps updating even without
+pressing anything - and closes the panel once you press `Esc` after
+it has finished. Basic ANSI colors in the program's output are shown
+as-is; cursor movement and other escape sequences are stripped, so
+full-screen interactive programs (`curses` apps, `less`, and the
+like) aren't supported here - only plain print-style output.
+
+The panel keeps up to 10000 lines and can be scrolled independently
+of the live output: `Up`/`Down` move it a line at a time,
+`Ctrl+Up`/`Ctrl+Down` a page at a time. Scrolling up leaves the view
+exactly where it is even as more output keeps arriving below it (the
+divider line shows which lines are on screen out of the total while
+you're scrolled away from the bottom); scrolling back down to the
+very bottom resumes following the output live, the same as when you
+haven't scrolled at all.
+
 Which `python3` runs the file: if the shell Mini was launched from
 already has a virtualenv active (`VIRTUAL_ENV` is set), that one is
 used outright; otherwise Mini looks for a virtualenv of its own
@@ -246,13 +263,6 @@ directory and walking up to the worktree root, and falls back to
 Mini's own interpreter if none is found. The same resolution feeds
 `:lint` too, so a project's own `flake8`/`mypy` are used ahead of
 whatever's on the system `PATH`.
-`Esc` unfocuses the panel while the program is still running, leaving
-it going in the background - the output keeps updating even without
-pressing anything - and closes the panel once you press `Esc` after
-it has finished. Basic ANSI colors in the program's output are shown
-as-is; cursor movement and other escape sequences are stripped, so
-full-screen interactive programs (`curses` apps, `less`, and the
-like) aren't supported here - only plain print-style output.
 
 `:lint` saves the file and runs `flake8` then `mypy` on it in that
 same output panel (so it's Ctrl+C-able and closes with `Esc` the same

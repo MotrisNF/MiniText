@@ -33,6 +33,7 @@ MIN_EDITOR_WIDTH = 20
 WORKTREE_SEPARATOR_WIDTH = 2
 MIN_SUGGESTION_PREFIX = 2
 UNDO_HISTORY_LIMIT = 1000
+RUN_OUTPUT_LINE_LIMIT = 10000
 PYTHON_VOCABULARY = sorted(
     set(keyword.kwlist)
     | {name for name in dir(builtins) if not name.startswith("_")}
@@ -569,6 +570,11 @@ class TextEditor:
         self.run_output_lines = []
         self.run_pending_text = ""
         self.run_focused = False
+        # None = pinned to the live tail (follows new output, like
+        # `tail -f`); otherwise the absolute line index the user
+        # scrolled to, which stays put as more output arrives below it.
+        self.run_view_start = None
+        self._run_rows = 0
         self.suggestion_matches = []
         self.suggestion_index = 0
         self._suggestion_dismissed_at = None
@@ -795,7 +801,8 @@ class TextEditor:
             "  :tree    Toggle the worktree panel's visibility\r\n",
             "  :run     Run this .py file, output shown below the code\r\n",
             "           (Ctrl+C interrupts it, Esc unfocuses/closes it,\r\n",
-            "           typing sends input to it)\r\n",
+            "           typing sends input to it, Up/Down or\r\n",
+            "           Ctrl+Up/Down scroll its output)\r\n",
             "  :lint    Run flake8 + mypy on this file, same output\r\n",
             "           panel as :run; deletes .mypy_cache afterward\r\n",
             "  Worktree: Up/Down or j/k move, l expands a directory,\r\n",
@@ -861,6 +868,16 @@ class TextEditor:
         else:
             run_rows = 0
             editor_rows = visible_rows
+        self._run_rows = run_rows
+        # Where the visible window into run_display_lines starts:
+        # pinned (None) always tracks the live tail, like `tail -f`;
+        # otherwise it's a fixed absolute position the user scrolled
+        # to, which stays put as more output arrives below it.
+        run_max_start = max(0, len(run_display_lines) - run_rows)
+        run_start = (
+            run_max_start if self.run_view_start is None
+            else min(self.run_view_start, run_max_start)
+        )
         self._ensure_cursor_visible(editor_rows)
         last_visible_line = min(
             len(self.lines), self.viewport_top + editor_rows
@@ -904,7 +921,17 @@ class TextEditor:
                 status_word = (
                     "running" if self.run_process is not None else "finished"
                 )
-                divider_text = f" Output ({status_word}) "
+                if self.run_view_start is None:
+                    divider_text = f" Output ({status_word}) "
+                else:
+                    shown_through = min(
+                        run_start + run_rows, len(run_display_lines)
+                    )
+                    divider_text = (
+                        f" Output ({status_word}) - lines "
+                        f"{run_start + 1}-{shown_through}"
+                        f"/{len(run_display_lines)} "
+                    )
                 divider_width = max(
                     len(divider_text), terminal_width - editor_col_offset
                 )
@@ -915,9 +942,7 @@ class TextEditor:
                 )
             elif run_visible and row_offset > editor_rows:
                 run_row_index = row_offset - editor_rows - 1
-                output_index = (
-                    len(run_display_lines) - run_rows + run_row_index
-                )
+                output_index = run_start + run_row_index
                 if 0 <= output_index < len(run_display_lines):
                     editor_row = (
                         run_display_lines[output_index] + theme.BASE_STYLE
@@ -1828,6 +1853,7 @@ class TextEditor:
         self.run_output_lines = [f"$ {label}"]
         self.run_pending_text = ""
         self.run_focused = True
+        self.run_view_start = None
         _run_output_fd = master_fd
 
     def _start_run(self):
@@ -1866,9 +1892,15 @@ class TextEditor:
         )
         *complete_lines, self.run_pending_text = text.split("\n")
         self.run_output_lines.extend(complete_lines)
-        max_lines = 2000
-        if len(self.run_output_lines) > max_lines:
-            self.run_output_lines = self.run_output_lines[-max_lines:]
+        overflow = len(self.run_output_lines) - RUN_OUTPUT_LINE_LIMIT
+        if overflow > 0:
+            self.run_output_lines = self.run_output_lines[overflow:]
+            # Lines are being dropped from the front, so a scrolled-up
+            # (non-pinned) view has to shift back by the same amount
+            # to keep pointing at the same content instead of quietly
+            # drifting to the wrong lines.
+            if self.run_view_start is not None:
+                self.run_view_start = max(0, self.run_view_start - overflow)
 
     def _finish_run(self):
         global _run_output_fd
@@ -1895,6 +1927,27 @@ class TextEditor:
         )
         self.run_output_lines.append("(Press Esc to close)")
 
+    def _scroll_run_output(self, key):
+        """Moves the output panel's view. UP/DOWN by one line,
+        CTRL-UP/CTRL-DOWN by a page. Scrolling up un-pins the view from
+        the live tail; scrolling back down to the bottom re-pins it,
+        so new output resumes auto-following (`tail -f`-style) rather
+        than requiring a DOWN per line forever to catch back up."""
+        run_display_lines = self.run_output_lines
+        if self.run_pending_text:
+            run_display_lines = run_display_lines + [self.run_pending_text]
+        max_start = max(0, len(run_display_lines) - self._run_rows)
+        current_start = (
+            max_start if self.run_view_start is None
+            else min(self.run_view_start, max_start)
+        )
+        step = self._run_rows if key in ("CTRL-UP", "CTRL-DOWN") else 1
+        if key in ("UP", "CTRL-UP"):
+            self.run_view_start = max(0, current_start - step)
+        else:
+            new_start = min(current_start + step, max_start)
+            self.run_view_start = None if new_start >= max_start else new_start
+
     def _stop_run(self):
         if self.run_process is not None and self.run_process.poll() is None:
             self.run_focused = False
@@ -1906,6 +1959,7 @@ class TextEditor:
         self.run_output_lines = []
         self.run_pending_text = ""
         self.run_focused = False
+        self.run_view_start = None
 
     def _find_tab_for_path(self, path):
         for index, state in enumerate(self.tabs):
@@ -2273,6 +2327,10 @@ class TextEditor:
                                 self.run_process.send_signal(signal.SIGINT)
                         elif key == ESC:
                             self._stop_run()
+                        elif key in (
+                            "UP", "DOWN", "CTRL-UP", "CTRL-DOWN"
+                        ):
+                            self._scroll_run_output(key)
                         elif self.run_master_fd is not None:
                             if key in ("\r", "\n"):
                                 os.write(self.run_master_fd, b"\n")
