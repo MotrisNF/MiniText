@@ -62,6 +62,26 @@ class TabsMixin:
         self._apply_buffer_state(self.tabs[self.active_tab])
         self.status = f"Opened {path} in a new tab"
 
+    def _open_update_notice_tab(self):
+        """Opens a new, unnamed tab announcing that an update was
+        found by the background watcher (see updater.py) while this
+        session was already running - `mini --update`'s own startup
+        check shows a banner instead, since there's no editor open
+        yet at that point to give it a tab."""
+        self._sync_active_tab()
+        new_state = self._blank_buffer_state()
+        new_state["lines"] = [
+            "A new version of Mini is available.",
+            "",
+            "Run 'mini --update' from a shell to install it.",
+            "",
+            "(This is just a notice, not a file - close it with :q.)",
+        ]
+        self.tabs.append(new_state)
+        self.active_tab = len(self.tabs) - 1
+        self._apply_buffer_state(self.tabs[self.active_tab])
+        self.status = "A new version of Mini is available"
+
     def _close_current_tab(self):
         if len(self.tabs) <= 1:
             self.running = False

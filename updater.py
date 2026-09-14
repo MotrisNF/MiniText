@@ -12,19 +12,32 @@ Layout on disk, once installed::
     $LIBDIR/
         src/            <- git clone, origin points at the real remote
         env             <- LIBDIR=... / BINDIR=... used to reinstall
-        last_check      <- last date (YYYY-MM-DD) the remote was checked
+        last_check      <- unix timestamp the remote was last checked
+
+Mini never checks the remote more than once every CHECK_INTERVAL_SECONDS
+(4 hours): once at most per launch (`check_for_updates_on_open`), and -
+for however long a single session stays open past that - a background
+thread (`start_background_update_watcher`) keeps checking on the same
+schedule, so a long-running Mini still notices an update without
+needing to be restarted. Neither ever calls GitHub's REST API or comes
+close to any rate limit that matters - both just run plain git
+(ls-remote/fetch), the same operation any git client makes on its own
+schedule, at a small fraction of the frequency a typical CI job or
+package manager already polls at.
 """
 
-import datetime
 import os
 import subprocess
 import sys
+import threading
+import time
 
 _GIT_ENV = dict(
     os.environ,
     GIT_TERMINAL_PROMPT="0",
     GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=3",
 )
+CHECK_INTERVAL_SECONDS = 4 * 60 * 60
 
 
 def _paths():
@@ -87,16 +100,16 @@ def _remote_is_ahead(src_dir):
     return ancestor.returncode == 0
 
 
-def _today():
-    return datetime.date.today().isoformat()
-
-
-def _read_last_check(install_dir):
+def _seconds_since_last_check(install_dir):
+    """Seconds since the remote was last checked, or None if it never
+    has been (or the timestamp is unreadable - including an older
+    Mini's "YYYY-MM-DD" format, which just fails the float() parse) -
+    both treated the same way by callers: check now."""
     try:
         path = os.path.join(install_dir, "last_check")
         with open(path, encoding="utf-8") as f:
-            return f.read().strip()
-    except OSError:
+            return time.time() - float(f.read().strip())
+    except (OSError, ValueError):
         return None
 
 
@@ -105,7 +118,7 @@ def _write_last_check(install_dir):
         with open(
             os.path.join(install_dir, "last_check"), "w", encoding="utf-8"
         ) as f:
-            f.write(_today())
+            f.write(str(time.time()))
     except OSError:
         pass
 
@@ -145,7 +158,8 @@ def check_for_updates_on_open():
     if not _is_installed_copy():
         return
     src_dir, install_dir = _paths()
-    if _read_last_check(install_dir) == _today():
+    elapsed = _seconds_since_last_check(install_dir)
+    if elapsed is not None and elapsed < CHECK_INTERVAL_SECONDS:
         return
     try:
         ahead = _remote_is_ahead(src_dir)
@@ -156,6 +170,46 @@ def check_for_updates_on_open():
     _write_last_check(install_dir)
     if ahead:
         _show_update_banner()
+
+
+def start_background_update_watcher():
+    """For a session that stays open past CHECK_INTERVAL_SECONDS: a
+    daemon thread that keeps checking on the same schedule
+    check_for_updates_on_open uses (so opening/closing Mini
+    repeatedly never resets the clock - only however long a check is
+    actually overdue by is ever waited out), for as long as the
+    process lives. Returns a read fd to watch with select() - written
+    to exactly when an update is found - or None for a non-installed
+    copy, where this is a no-op."""
+    if not _is_installed_copy():
+        return None
+    src_dir, install_dir = _paths()
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
+
+    def watch():
+        while True:
+            elapsed = _seconds_since_last_check(install_dir)
+            wait = (
+                0 if elapsed is None
+                else max(0, CHECK_INTERVAL_SECONDS - elapsed)
+            )
+            time.sleep(wait)
+            try:
+                ahead = _remote_is_ahead(src_dir)
+            except (subprocess.TimeoutExpired, OSError):
+                ahead = None
+            if ahead is not None:
+                _write_last_check(install_dir)
+                if ahead:
+                    try:
+                        os.write(write_fd, b"1")
+                    except OSError:
+                        return
+            time.sleep(CHECK_INTERVAL_SECONDS)
+
+    threading.Thread(target=watch, daemon=True).start()
+    return read_fd
 
 
 def run_update_command():

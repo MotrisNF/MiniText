@@ -154,17 +154,21 @@ full command reference from inside the editor.
 
 ### Updating
 
-An installed Mini (via `make install`) checks once a day, the first
-time it's opened that day, whether the repository it was installed
-from has new commits - a silent, non-blocking check that never delays
-startup if there's no network. If it's behind, a one-line banner shows
-before the editor opens (dismissed by pressing any key) pointing you
-at `mini --update`, which pulls the latest changes and reinstalls
-automatically. Running `mini --update` directly always re-checks,
-regardless of when it last checked. This only works for a `make
-install`-created install, not for running `python3 main.py` straight
-from a checkout. See [CHANGELOG.md](CHANGELOG.md) for what an update
-actually brings.
+An installed Mini (via `make install`) checks the repository it was
+installed from for new commits at most once every 4 hours - a silent,
+non-blocking check that never delays startup if there's no network.
+If it's behind when you open Mini, a one-line banner shows before the
+editor opens (dismissed by pressing any key) pointing you at
+`mini --update`. If a session stays open past that 4-hour mark
+instead, a background check keeps running on that same schedule for
+as long as Mini stays open; finding an update there opens a new,
+unnamed tab announcing it (close it with `:q` like any other tab) -
+nothing else about the session is disturbed. Either way,
+`mini --update` pulls the latest changes and reinstalls automatically.
+Running `mini --update` directly always re-checks, regardless of when
+it last checked. This only works for a `make install`-created
+install, not for running `python3 main.py` straight from a checkout.
+See [CHANGELOG.md](CHANGELOG.md) for what an update actually brings.
 
 Either way, the reinstall step also carries your `~/.minirc` forward:
 any setting or color key a newer Mini added that your file doesn't

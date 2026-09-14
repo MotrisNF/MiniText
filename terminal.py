@@ -30,6 +30,7 @@ def _get_terminal_size():
 
 _resize_wakeup_fd = None
 _run_output_fd = None
+_update_check_fd = None
 
 
 def _enable_resize_wakeup():
@@ -90,6 +91,8 @@ def read_key():
         watch_fds.append(_resize_wakeup_fd)
     if _pending_byte is None and _run_output_fd is not None:
         watch_fds.append(_run_output_fd)
+    if _pending_byte is None and _update_check_fd is not None:
+        watch_fds.append(_update_check_fd)
     if _pending_byte is None:
         try:
             ready, _, _ = select.select(watch_fds, [], [])
@@ -103,6 +106,12 @@ def read_key():
             return "RESIZE"
         if _run_output_fd is not None and _run_output_fd in ready:
             return "RUN_OUTPUT"
+        if _update_check_fd is not None and _update_check_fd in ready:
+            try:
+                os.read(_update_check_fd, 4096)
+            except OSError:
+                pass
+            return "UPDATE_AVAILABLE"
 
     first_byte = _read_stdin_byte(stdin_fd)
     if not first_byte:
@@ -171,3 +180,12 @@ def set_run_output_fd(fd):
     without terminal.py needing to import run_panel.py back."""
     global _run_output_fd
     _run_output_fd = fd
+
+
+def set_update_check_fd(fd):
+    """Called by main.py/text_editor.py so read_key()'s select() loop
+    also wakes up when the background update-check thread (see
+    updater.py) has found a new version, without terminal.py needing
+    to import updater.py back."""
+    global _update_check_fd
+    _update_check_fd = fd

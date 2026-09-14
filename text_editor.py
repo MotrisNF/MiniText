@@ -8,6 +8,8 @@ import os
 import signal
 from collections import deque
 
+import terminal
+import updater
 from autocomplete import SuggestionMixin
 from commands import CommandMixin
 from editing import BufferEditMixin, UNDO_HISTORY_LIMIT, _indent_unit
@@ -88,6 +90,12 @@ class TextEditor(
         previous_handler = signal.signal(signal.SIGWINCH, _handle_resize)
         previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
         previous_sigquit = signal.signal(signal.SIGQUIT, signal.SIG_IGN)
+        # A session that stays open past updater.CHECK_INTERVAL_SECONDS
+        # still gets checked, on the same schedule as the startup
+        # check - this is a no-op (returns None) for a dev checkout.
+        update_check_fd = updater.start_background_update_watcher()
+        if update_check_fd is not None:
+            terminal.set_update_check_fd(update_check_fd)
         try:
             with raw_terminal():
                 while self.running:
@@ -97,6 +105,9 @@ class TextEditor(
                         continue
                     if key == "EOF":
                         break
+                    if key == "UPDATE_AVAILABLE":
+                        self._open_update_notice_tab()
+                        continue
                     if key == "RUN_OUTPUT":
                         self._pump_run_output()
                         continue
@@ -299,6 +310,9 @@ class TextEditor(
             signal.signal(signal.SIGINT, previous_sigint)
             signal.signal(signal.SIGQUIT, previous_sigquit)
             _disable_resize_wakeup(read_fd, write_fd)
+            if update_check_fd is not None:
+                terminal.set_update_check_fd(None)
+                os.close(update_check_fd)
 
 
 def edit_file(file_name=None, worktree_root=None):

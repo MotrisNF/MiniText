@@ -5,6 +5,12 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- The update check now runs at most once every 4 hours instead of
+  once a day. A session that stays open past that mark keeps checking
+  in the background on the same schedule for as long as it's open,
+  opening a new tab to announce an update if it finds one - previously
+  only the check that ran once before the editor opened could ever
+  notice.
 - Internal: split the single ~2600-line `text_editor.py` into
   focused modules by concern (`rendering.py`, `editing.py`,
   `commands.py`, `tabs.py`, `worktree.py`, `run_panel.py`,
