@@ -160,7 +160,8 @@ at `mini --update`, which pulls the latest changes and reinstalls
 automatically. Running `mini --update` directly always re-checks,
 regardless of when it last checked. This only works for a `make
 install`-created install, not for running `python3 main.py` straight
-from a checkout.
+from a checkout. See [CHANGELOG.md](CHANGELOG.md) for what an update
+actually brings.
 
 ## Modes
 
@@ -204,12 +205,12 @@ from a checkout.
 
 | Command       | Action                                              |
 |---------------|-------------------------------------------------------|
-| `:s`          | Save                                                 |
-| `:x`          | Close the current tab (asking to save first if needed); exits if it's the last tab |
-| `:sx`, `:xs`  | Save and close the current tab (or exit if it's the last one) |
-| `:s!`         | Save every open tab, no confirmation                 |
-| `:x!`         | Exit immediately, discarding unsaved changes in every tab |
-| `:sx!`, `:xs!` | Save every open tab, then exit                      |
+| `:w`          | Save                                                 |
+| `:q`          | Close the current tab (asking to save first if needed); exits if it's the last tab |
+| `:wq`, `:qw`  | Save and close the current tab (or exit if it's the last one) |
+| `:w!`         | Save every open tab, no confirmation                 |
+| `:q!`         | Exit immediately, discarding unsaved changes in every tab |
+| `:wq!`, `:qw!` | Save every open tab, then exit                      |
 | `:l <n>`      | Jump to line `n`                                     |
 | `:b`          | Jump to the beginning of the file                    |
 | `:e`          | Jump to the end of the file                          |
@@ -223,7 +224,7 @@ from a checkout.
 | `:vl <n>`     | Paste as a new line before line `n`                  |
 | `:u`          | Undo                                                 |
 | `:r`          | Redo                                                 |
-| `:w`          | Toggle the worktree panel's visibility                |
+| `:tree`       | Toggle the worktree panel's visibility                |
 | `:run`        | Run this file and show its output below the code (also `:terminal`) |
 | `:lint`       | Run flake8 + mypy on this file, output shown the same way |
 | `:help`       | Show the in-editor help screen                       |
@@ -262,11 +263,11 @@ way), deleting `.mypy_cache` once both finish. Needs `flake8` and
 
 Focusing the panel with `w` shows it if it was hidden; leaving focus
 (`v`, `Esc`, `:`, or `i`) hides it again in that case, restoring
-whatever visibility it had before. If you showed it with `:w` instead,
-it stays visible after you leave focus - `:w` is the "keep it open"
-toggle, `w` is "let me look at it for a moment". `mini .` (or
-`mini <dir>`) starts with the panel shown and focused, as it always
-did.
+whatever visibility it had before. If you showed it with `:tree`
+instead, it stays visible after you leave focus - `:tree` is the
+"keep it open" toggle, `w` is "let me look at it for a moment".
+`mini .` (or `mini <dir>`) starts with the panel shown and focused,
+as it always did.
 
 While the panel is visible, the status/command line and the mode bar
 at the bottom start right where the panel ends, lining up with the
@@ -374,6 +375,7 @@ never prevents the editor from starting.
 | `install.sh`    | Installs or uninstalls Mini and its default configuration    |
 | `Makefile`      | `make install` / `make uninstall` wrappers around `install.sh` |
 | `VERSION`       | Current version, printed by `mini --version`                 |
+| `CHANGELOG.md`  | What changed in each version                                 |
 
 ## Limitations
 

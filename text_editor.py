@@ -12,6 +12,7 @@ import subprocess
 import sys
 import termios
 import tty
+from collections import deque
 from contextlib import contextmanager
 
 import theme
@@ -31,6 +32,7 @@ WORKTREE_WIDTH = 28
 MIN_EDITOR_WIDTH = 20
 WORKTREE_SEPARATOR_WIDTH = 2
 MIN_SUGGESTION_PREFIX = 2
+UNDO_HISTORY_LIMIT = 1000
 PYTHON_VOCABULARY = sorted(
     set(keyword.kwlist)
     | {name for name in dir(builtins) if not name.startswith("_")}
@@ -549,8 +551,8 @@ class TextEditor:
         self.count_locked = False
         self.search_query = None
         self.last_search = None
-        self.undo_stack = []
-        self.redo_stack = []
+        self.undo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
+        self.redo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
         self.modified = False
         self.worktree_visible = False
         self.worktree_focused = False
@@ -572,6 +574,10 @@ class TextEditor:
         self._suggestion_dismissed_at = None
         self._import_members_cache = {}
         self._line_word_cache = {}
+        self._word_pool_static = frozenset()
+        self._word_pool_lines_ref = None
+        self._word_pool_line_count = -1
+        self._word_pool_line_index = -1
         self._worktree_entries_cache = None
 
     BUFFER_ATTRIBUTES = (
@@ -594,7 +600,8 @@ class TextEditor:
         return {
             "file_name": None, "lines": [""], "line": 0, "column": 0,
             "selection_anchor": None, "viewport_top": 0,
-            "undo_stack": [], "redo_stack": [], "modified": False,
+            "undo_stack": deque(maxlen=UNDO_HISTORY_LIMIT),
+            "redo_stack": deque(maxlen=UNDO_HISTORY_LIMIT), "modified": False,
         }
 
     def _sync_active_tab(self):
@@ -785,7 +792,7 @@ class TextEditor:
             "           matches, Up/Down/Enter also navigate/accept\r\n",
             "  Ctrl+Arrows  Select text (Visual mode)\r\n",
             "  w        Show and focus the worktree panel (Visual mode)\r\n",
-            "  :w       Toggle the worktree panel's visibility\r\n",
+            "  :tree    Toggle the worktree panel's visibility\r\n",
             "  :run     Run this .py file, output shown below the code\r\n",
             "           (Ctrl+C interrupts it, Esc unfocuses/closes it,\r\n",
             "           typing sends input to it)\r\n",
@@ -816,13 +823,13 @@ class TextEditor:
             "  :r / Ctrl+Y  Redo\r\n",
             "  /text     Search\r\n",
             "  n        Repeat last search (Visual mode)\r\n",
-            "  :s       Save\r\n",
-            "  :x       Close this tab (asks to save changes if any);\r\n",
+            "  :w       Save\r\n",
+            "  :q       Close this tab (asks to save changes if any);\r\n",
             "           exits if it's the last tab open\r\n",
-            "  :sx/:xs  Save and close this tab (or exit if last)\r\n",
-            "  :s!      Save every open tab, no confirmation\r\n",
-            "  :x!      Exit now, discarding all unsaved changes\r\n",
-            "  :sx!/:xs!  Save every open tab, then exit\r\n",
+            "  :wq/:qw  Save and close this tab (or exit if last)\r\n",
+            "  :w!      Save every open tab, no confirmation\r\n",
+            "  :q!      Exit now, discarding all unsaved changes\r\n",
+            "  :wq!/:qw!  Save every open tab, then exit\r\n",
             "  q        Return to the editor\r\n",
             "\r\nPress q to return to the editor.",
             "\x1b[?25l\x1b[3;1H\x1b[?25h",
@@ -836,8 +843,9 @@ class TextEditor:
             return
         number_width = len(str(len(self.lines)))
         tab_bar = self._tab_bar_line()
-        terminal_height = max(4, _get_terminal_size().lines)
-        terminal_width = _get_terminal_size().columns
+        terminal_size = _get_terminal_size()
+        terminal_height = max(4, terminal_size.lines)
+        terminal_width = terminal_size.columns
         input_row = terminal_height - 1
         visible_rows = max(1, terminal_height - 3)
         run_visible = (
@@ -1103,24 +1111,48 @@ class TextEditor:
             start -= 1
         return line[start:self.column]
 
+    def _line_words(self, line):
+        """The identifier-like words in one line's text, cached by the
+        line's own content rather than its position - so it stays
+        correct no matter how lines are inserted, deleted, or
+        reordered, since the key IS the content."""
+        cache = self._line_word_cache
+        words = cache.get(line)
+        if words is None:
+            words = frozenset(_WORD_PATTERN.findall(line))
+            if len(cache) < _LINE_WORD_CACHE_LIMIT:
+                cache[line] = words
+        return words
+
+    def _rebuild_static_word_pool(self):
+        words = set()
+        for index, line in enumerate(self.lines):
+            if index != self.line:
+                words |= self._line_words(line)
+        self._word_pool_static = words
+        self._word_pool_lines_ref = self.lines
+        self._word_pool_line_count = len(self.lines)
+        self._word_pool_line_index = self.line
+
     def _collect_buffer_words(self):
         """Every identifier-like word used anywhere in the buffer, for
-        autocompletion. Cached per line *content* rather than line
-        position, so retyping one line doesn't cost more than that one
-        line - unlike a position-keyed cache, this stays correct no
-        matter how lines are inserted, deleted, or reordered, since
-        the key IS the content: unrelated lines are always a cache
-        hit, even across undo/redo or switching tabs."""
-        cache = self._line_word_cache
-        words = set()
-        for line in self.lines:
-            line_words = cache.get(line)
-            if line_words is None:
-                line_words = frozenset(_WORD_PATTERN.findall(line))
-                if len(cache) < _LINE_WORD_CACHE_LIMIT:
-                    cache[line] = line_words
-            words |= line_words
-        return words
+        autocompletion. Every *other* line's contribution is cached as
+        one "static" union, rebuilt only when the buffer's identity
+        (a different tab/undo snapshot/file), its line count, or which
+        line the cursor is on changes - so typing fast on one line,
+        the common case this exists for, no longer re-scans the whole
+        file on every keystroke: only the cursor's own line (cheap -
+        it's the one thing actually changing) is re-scanned fresh."""
+        if (
+            self.lines is not self._word_pool_lines_ref
+            or len(self.lines) != self._word_pool_line_count
+            or self.line != self._word_pool_line_index
+        ):
+            self._rebuild_static_word_pool()
+        current_line = (
+            self.lines[self.line] if 0 <= self.line < len(self.lines) else ""
+        )
+        return self._word_pool_static | self._line_words(current_line)
 
     def _local_module_names(self):
         directory = (
@@ -1370,10 +1402,13 @@ class TextEditor:
         return rows
 
     def _snapshot(self):
+        # undo_stack/redo_stack are deques capped at UNDO_HISTORY_LIMIT,
+        # so the oldest entry is dropped in O(1) once full - a plain
+        # list would need an O(n) shift for that on every single
+        # keystroke past the cap, which is exactly what made continuous
+        # fast typing get laggier the longer a session went on.
         self.undo_stack.append((list(self.lines), self.line, self.column))
         self.redo_stack.clear()
-        if len(self.undo_stack) > 1000:
-            del self.undo_stack[0]
         self.modified = True
 
     def _undo(self):
@@ -1636,11 +1671,11 @@ class TextEditor:
             self.status = f"Saved {saved} tab(s)"
 
     def _execute_forced_command(self, name):
-        if name == "s":
+        if name == "w":
             self._save_all_tabs()
-        elif name == "x":
+        elif name == "q":
             self.running = False
-        elif name in ("sx", "xs"):
+        elif name in ("wq", "qw"):
             self._save_all_tabs()
             self.running = False
 
@@ -1684,8 +1719,8 @@ class TextEditor:
         self.count_locked = False
         self.command = None
         self.search_query = None
-        self.undo_stack = []
-        self.redo_stack = []
+        self.undo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
+        self.redo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
         self.modified = False
         self.viewport_top = 0
         self.status = f"Opened {path}"
@@ -2130,13 +2165,13 @@ class TextEditor:
         command = self.command
         self.command = None
         self.mode = "visual"
-        if command in ("s!", "x!", "sx!", "xs!"):
+        if command in ("w!", "q!", "wq!", "qw!"):
             self._execute_forced_command(command[:-1])
             return
         name, argument = self._parse_command(command)
-        if name == "s" and argument is None:
+        if name == "w" and argument is None:
             self._save()
-        elif name == "x" and argument is None:
+        elif name == "q" and argument is None:
             prompt = (
                 "Save changes before closing this tab? (y/n)"
                 if len(self.tabs) > 1 else
@@ -2153,7 +2188,7 @@ class TextEditor:
             self._undo()
         elif name == "r" and argument is None:
             self._redo()
-        elif name in ("sx", "xs") and argument is None:
+        elif name in ("wq", "qw") and argument is None:
             if self._save():
                 self._close_current_tab()
         elif name == "l" and argument is not None:
@@ -2189,7 +2224,7 @@ class TextEditor:
             self._paste_at_cursor()
         elif name == "vl" and argument is not None:
             self._paste_before_line(argument)
-        elif name == "w" and argument is None:
+        elif name == "tree" and argument is None:
             self.worktree_visible = not self.worktree_visible
             if self.worktree_visible:
                 self._invalidate_worktree_cache()
