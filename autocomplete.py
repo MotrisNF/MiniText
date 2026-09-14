@@ -89,7 +89,19 @@ FROM_IMPORT_NAMES_PATTERN = re.compile(
     r"(?:[A-Za-z_][A-Za-z0-9_]*(?:\s+as\s+[A-Za-z_][A-Za-z0-9_]*)?\s*,\s*)*$"
 )
 FROM_IMPORT_LINE_PATTERN = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)$")
+_BARE_IMPORT_LINE_PATTERN = re.compile(r"^\s*import\s+(.+)$")
 MAX_SUGGESTION_DROPDOWN_ITEMS = 8
+_IMPORT_CHECK_SCRIPT = (
+    "import sys, importlib\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "try:\n"
+    "    module = importlib.import_module(sys.argv[2])\n"
+    "except Exception:\n"
+    "    print('BROKEN')\n"
+    "else:\n"
+    "    missing = [n for n in sys.argv[3:] if not hasattr(module, n)]\n"
+    "    print('BROKEN' if missing else 'OK')\n"
+)
 _MODULE_INTROSPECTION_SCRIPT = (
     "import sys, importlib, os\n"
     "sys.path.insert(0, sys.argv[1])\n"
@@ -297,6 +309,51 @@ def _parse_imported_names(context_before):
         if name:
             names.add(name)
     return names
+
+
+def _parse_import_check_names(names_part):
+    """The concrete names in a *complete* `from X import a, b as c` -
+    a `*` doesn't name anything checkable, so it's skipped rather
+    than ever counting as "missing"."""
+    names_part = names_part.split("#", 1)[0]
+    names = []
+    for chunk in names_part.split(","):
+        name = chunk.strip().split(" as ")[0].strip()
+        if name and name != "*":
+            names.append(name)
+    return names
+
+
+def _parse_bare_import_modules(rest):
+    """The module name(s) in a *complete* `import a, b as c, d.e` -
+    one line can name more than one, each optionally aliased."""
+    rest = rest.split("#", 1)[0]
+    modules = []
+    for chunk in rest.split(","):
+        module = chunk.strip().split(" as ")[0].strip()
+        if module:
+            modules.append(module)
+    return modules
+
+
+def _check_import_resolves(directory, module_name, names, python_path):
+    """True if this import is broken - the module itself fails to
+    import, or (for `from module_name import a, b`) any of `names`
+    isn't actually an attribute of it once imported - checked for
+    real, by actually trying it in an isolated subprocess using
+    `python_path` (normally the project's own resolved virtualenv,
+    the same interpreter :run/:lint would use for this file - not
+    necessarily Mini's own). False if it resolves; None if it
+    couldn't even be checked (a `python_path` that doesn't work)."""
+    try:
+        result = subprocess.run(
+            [python_path, "-c", _IMPORT_CHECK_SCRIPT, directory,
+             module_name, *names],
+            capture_output=True, text=True, timeout=3,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return result.stdout.strip() == "BROKEN"
 
 
 def _introspect_module_members(directory, module_name):
@@ -590,6 +647,50 @@ class SuggestionMixin:
         if not _compiler_include_dirs(cpp):
             return False
         return _resolve_system_header_path(header_name, cpp) is None
+
+    def _module_import_broken(self, module_name, names, python_path):
+        """Whether `import module_name` (or `from module_name import
+        *names`) would actually fail - a plain top-level stdlib
+        import (nothing to import by name, no dotted submodule) is
+        trusted outright, without spawning anything, since it will
+        as good as always resolve; everything else is actually
+        checked, once per (interpreter, module, names) combination
+        for the rest of the session."""
+        if (
+            not names and "." not in module_name
+            and module_name in MODULE_VOCABULARY
+        ):
+            return False
+        directory = (
+            os.path.dirname(self.file_name) if self.file_name else ""
+        ) or os.getcwd()
+        cache_key = (python_path, directory, module_name, tuple(names))
+        if cache_key not in self._import_broken_cache:
+            self._import_broken_cache[cache_key] = _check_import_resolves(
+                directory, module_name, names, python_path
+            )
+        return bool(self._import_broken_cache[cache_key])
+
+    def _import_line_broken(self, line, python_path):
+        """Whether this line's import(s) would actually fail to
+        resolve - see _module_import_broken. A bare `import a, b`
+        checks every named module; the first broken one is enough to
+        flag the whole line."""
+        if python_path is None:
+            return False
+        from_match = FROM_IMPORT_LINE_PATTERN.match(line)
+        if from_match:
+            module_name, names_part = from_match.groups()
+            names = _parse_import_check_names(names_part)
+            return self._module_import_broken(module_name, names, python_path)
+        bare_match = _BARE_IMPORT_LINE_PATTERN.match(line)
+        if bare_match:
+            for module_name in _parse_bare_import_modules(
+                bare_match.group(1)
+            ):
+                if self._module_import_broken(module_name, [], python_path):
+                    return True
+        return False
 
     def _module_member_names(self, module_name):
         directory = (

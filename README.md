@@ -64,7 +64,18 @@ usable as a general-purpose text editor for anything else.
   offered too (only `__dunder__` names are hidden), since a small
   local file's real API is often just that. Suggestions never trigger
   inside a string or a comment, so typing free-form text there doesn't
-  get treated as Python code.
+  get treated as Python code. An `import`/`from ... import ...` line
+  that would actually fail - a module that can't be imported, or a
+  name that doesn't really exist on it - gets the same `●` marker as
+  an overly long line (see `MAX_COLS` below), checked the same way
+  the completion above is: for real, in an isolated subprocess, using
+  the same interpreter `:run`/`:lint` would actually use for this
+  file (an active `VIRTUAL_ENV`, else a `.venv`/`venv`/`env`/`.env`
+  found from the file up to the worktree root, else Mini's own) -
+  never Mini's own interpreter outright, since a package only
+  installed in the project's own virtualenv would otherwise be
+  wrongly flagged as broken. A plain `import` of a top-level standard
+  library module is trusted outright, without spawning anything.
 - Syntax highlighting and autocompletion for `.c`/`.h` and
   `.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files too, in the same style
   as `.py` - keywords, built-in type names, preprocessor directives,
@@ -448,8 +459,9 @@ COMMENT_COLOR=108
   instead of the two fighting for the same spot. A line that's
   actually longer than `MAX_COLS` gets a `●` in `LINE_LENGTH_ERROR_COLOR`
   where its line number/marker would be, instead of the ruler - the
-  same marker a C/C++ file's own unresolved `#include` gets, in that
-  same spot.
+  same marker a C/C++ file's own unresolved `#include` gets, and a
+  `.py` file's own broken `import`/`from ... import ...` line, all in
+  that same spot.
 - `INDENT_WITH_TABS` (default `False`) picks what auto-indent, the
   bracket-splitting Enter, and the Tab key insert for one new level
   of indentation: a tab character (`True`) or `TAB_SIZE` spaces
@@ -569,3 +581,7 @@ Mini is intentionally small. Some notable limitations:
   offered for a little while: it's only actually forgotten the next
   time something forces a rescan (typing elsewhere after leaving the
   line the `#include` used to be on), not the instant it's deleted.
+- Whether a Python `import` resolves is cached the same way (per
+  interpreter, module, and names, for the rest of the session) - so
+  `pip install`-ing a missing package in another terminal while Mini
+  is open doesn't clear its `●` marker until Mini is restarted.

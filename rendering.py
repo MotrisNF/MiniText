@@ -356,6 +356,12 @@ class RenderMixin:
             apply_highlight = functools.partial(_highlight_c, cpp=True)
         else:
             apply_highlight = _no_highlight
+        # Resolved once per render, not per import line - the same
+        # interpreter :run/:lint would actually use for this file.
+        python_path = (
+            self._resolve_python_executable() if language == "python"
+            else None
+        )
 
         # Wrap rows for however many lines, starting at viewport_top,
         # fit in editor_rows - each entry is one screen row's worth of
@@ -515,7 +521,14 @@ class RenderMixin:
                             language,
                         )
                     )
-                    if missing_include or display_length > theme.MAX_COLS:
+                    broken_import = (
+                        language == "python"
+                        and self._import_line_broken(text, python_path)
+                    )
+                    if (
+                        missing_include or broken_import
+                        or display_length > theme.MAX_COLS
+                    ):
                         error_column = editor_col_offset + 1
                         ruler_overlay.append(
                             f"\x1b[{2 + row_offset};{error_column}H"

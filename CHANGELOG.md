@@ -5,6 +5,15 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- A Python `import`/`from ... import ...` line that would actually
+  fail now gets the same `●` marker as an overly long line, checked
+  for real in an isolated subprocess (the same way `from X import`
+  completion already works) - using the project's own resolved
+  interpreter (an active `VIRTUAL_ENV`, a project `.venv`, or Mini's
+  own as a last resort), never Mini's own outright, so a package
+  only installed in the project's virtualenv isn't wrongly flagged.
+  A plain top-level standard-library import is trusted without
+  spawning anything.
 - An `#include` that doesn't actually resolve (a local header not
   found next to the file, or a system one not found in the
   compiler's own include directories) now gets the same `●` marker
