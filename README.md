@@ -52,6 +52,15 @@ usable as a general-purpose text editor for anything else.
   the type is known this way, typing the `.` itself is enough to open
   the suggestions - no need to type any letters first, unlike every
   other completion context here, which needs at least 2.
+  When `make install`'s own virtualenv for Mini has `jedi` in it (see
+  "Installation" below), both `name.` and `from module import ` are
+  tried through it first - real parsing and inference instead of
+  Mini's own regex/`ast` heuristics, so it also covers a chained call
+  (`make().attr`), a subscript (`items[0].attr`), or a return-type-
+  dependent case the heuristics above give up on outright. Whenever
+  jedi can't answer (not installed, or it genuinely finds nothing),
+  the heuristics above run exactly as if jedi didn't exist, so nothing
+  here is a hard requirement.
   After `from module import `, it
   offers that module's actual members (`from sys import arg` suggests
   `argv`) - found by really importing the module in an isolated,
@@ -161,7 +170,10 @@ usable as a general-purpose text editor for anything else.
 
 - Linux or another Unix-like system with a terminal that supports
   ANSI escape sequences and 256 colors.
-- Python 3.10 or newer, with no additional packages.
+- Python 3.10 or newer. No packages need to be installed by hand -
+  Mini needs none to run, and `make install` manages its own private
+  copy of the one optional completion dependency it can use (see
+  "Installation" below).
 
 ## Installation
 
@@ -174,6 +186,18 @@ make install
 This installs the `mini` command for the current user:
 
 - The source files are copied to `~/.local/share/mini`.
+- A private virtualenv for Mini itself is created at
+  `~/.local/share/mini/venv`, with `jedi` installed into it for
+  better Python completion (see the `name.`/`from module import`
+  description above) - never into your system Python or any
+  project's own virtualenv. Mini runs from this virtualenv rather
+  than the system `python3` from here on, though it needs nothing in
+  it to work at all. If it can't be created or `jedi` can't be
+  installed (no network, no `python3-venv` package, ...), Mini falls
+  back to the system `python3` instead, without jedi's extras -
+  either way the install still succeeds. Re-running the installer (as
+  `mini --update` already does) leaves an already-working virtualenv
+  alone rather than recreating it every time.
 - A launcher script is installed at `~/.local/bin/mini`.
 - `~/.local/bin` is added to your `PATH` in `~/.bashrc`, `~/.zshrc`,
   `~/.profile`, and `~/.hellishrc` (whichever exist), if it isn't
@@ -215,18 +239,26 @@ full command reference from inside the editor.
 An installed Mini (via `make install`) checks the repository it was
 installed from for new commits at most once every 4 hours - a silent,
 non-blocking check that never delays startup if there's no network.
-If it's behind when you open Mini, a one-line banner shows before the
-editor opens (dismissed by pressing any key) pointing you at
-`mini --update`. If a session stays open past that 4-hour mark
+If it's behind when you open Mini, it asks right there, before the
+editor opens - "Update now? (y/n)" - since there's no unsaved buffer
+yet at that point for an update to put at risk. Answering `y` pulls
+the latest changes, reinstalls (the same as `mini --update` below),
+and relaunches straight into the new version; anything else (`n`,
+Enter, Esc, ...) skips it and opens the editor normally, on whatever
+was already installed. If a session stays open past that 4-hour mark
 instead, a background check keeps running on that same schedule for
 as long as Mini stays open; finding an update there opens a new,
 unnamed tab announcing it (close it with `:q` like any other tab) -
-nothing else about the session is disturbed. Either way,
-`mini --update` pulls the latest changes and reinstalls automatically.
-Running `mini --update` directly always re-checks, regardless of when
-it last checked. This only works for a `make install`-created
-install, not for running `python3 main.py` straight from a checkout.
-See [CHANGELOG.md](CHANGELOG.md) for what an update actually brings.
+nothing else about the session is disturbed, and updating from there
+still means running `mini --update` yourself (or answering the prompt
+on your next fresh launch) - a session already in progress, with
+buffers open, is not the place to update out from under itself.
+`mini --update` itself pulls the latest changes and reinstalls
+automatically, always re-checking regardless of when it last checked,
+whether or not it was already behind. This only works for a
+`make install`-created install, not for running `python3 main.py`
+straight from a checkout. See [CHANGELOG.md](CHANGELOG.md) for what an
+update actually brings.
 
 Either way, the reinstall step also carries your `~/.minirc` forward:
 any setting or color key a newer Mini added that your file doesn't
@@ -515,23 +547,36 @@ Mini is intentionally small. Some notable limitations:
 - The C/C++ side is word/keyword completion only - none of the
   Python side's type inference, `self`/`->` awareness, or macro
   expansion.
-- Completing names after `from module import `, or completing
-  `name.` when `name` was assigned an imported class, actually
-  imports that module (in an isolated subprocess, not Mini's own
-  process) to see what it contains. For your own local files this
-  means their top-level code really runs - the same as if you
-  executed them - the first time you complete from them in a session;
-  results are then cached until you restart Mini, even if the file
-  changes again. A class defined right in the file being edited is
-  read with `ast` instead (never executed), but only when the buffer
-  currently parses as valid Python - a mid-edit syntax error just
-  means no class-specific suggestions until it's valid again.
-- Type-aware `name.` completion only recognizes `name` as whatever a
-  single, literal `name = <expr>` assignment line before the cursor
-  looks like - it doesn't track reassignment through branches or
-  loops, return types of your own functions, or `module.Class(...)`
-  written with the module name inline (only a `Class` imported
-  directly via `from module import Class`).
+- Without jedi (see "Installation"), completing names after `from
+  module import `, or completing `name.` when `name` was assigned an
+  imported class, actually imports that module (in an isolated
+  subprocess, using the project's own resolved interpreter - not
+  necessarily Mini's own) to see what it contains. For your own local
+  files this means their top-level code really runs - the same as if
+  you executed them - the first time you complete from them in a
+  session; results are then cached until you restart Mini, even if
+  the file changes again. A class defined right in the file being
+  edited is read with `ast` instead (never executed), but only when
+  the buffer currently parses as valid Python - a mid-edit syntax
+  error just means no class-specific suggestions until it's valid
+  again. jedi, when available, replaces all of this with its own real
+  analysis - it neither executes your modules nor needs `ast` fallback
+  logic of its own, though it's still subject to the same "cached
+  until Mini restarts" behavior here, for the same reason.
+- Without jedi, type-aware `name.` completion only recognizes `name`
+  as whatever a single, literal `name = <expr>` assignment line before
+  the cursor looks like - it doesn't track reassignment through
+  branches or loops, return types of your own functions, or
+  `module.Class(...)` written with the module name inline (only a
+  `Class` imported directly via `from module import Class`). jedi
+  lifts all of these restrictions when it's available and can answer;
+  Mini only falls back to this narrower heuristic when it can't.
+- jedi runs in-process, synchronously, on Mini's own single-threaded
+  key-reading loop - there's no timeout on it the way there is on the
+  isolated-subprocess checks elsewhere. Its first use for a given
+  import or class in a session can be noticeably slower than a plain
+  buffer-word match (parsing/caching a large module or a cold
+  environment probe); Mini itself doesn't cap this.
 - Syntax highlighting colors each line independently, without
   awareness of multi-line constructs: a triple-quoted Python string,
   or a C/C++ `/* ... */` comment, spanning several lines won't be

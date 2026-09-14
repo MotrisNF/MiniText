@@ -3,6 +3,41 @@ set -euo pipefail
 
 MARK_BEGIN="# >>> mini PATH >>>"
 MARK_END="# <<< mini PATH <<<"
+JEDI_VERSION_SPEC="jedi>=0.19,<0.21"
+
+# Mini's own private virtualenv, used only to optionally power better
+# Python completion (see autocomplete.py's _get_jedi) - never to run
+# the file being edited, which always goes through its own resolved
+# interpreter (venv_detect.py) exactly as before. Idempotent: an
+# already-working venv (directory present, jedi importable) is left
+# alone - no network call, no reinstall - so a routine `mini --update`
+# (which re-runs this whole script) stays fast. A broken or missing
+# one is (re)created/reinstalled; if that fails outright (no network,
+# no python3-venv package, ...), Mini falls back to running on the
+# system python3 - jedi is an enhancement, never a hard requirement.
+ensure_mini_venv() {
+  local venv_dir="$1" venv_python="$1/bin/python3"
+  if [ ! -x "$venv_python" ]; then
+    if python3 -m venv "$venv_dir" >/dev/null 2>&1; then
+      echo "  Created Mini's own virtualenv at $venv_dir"
+    else
+      echo "  Could not create a virtualenv (python3-venv missing?)" \
+        "- continuing on the system python3, without jedi extras."
+      return
+    fi
+  fi
+  if ! "$venv_python" -c "import jedi" >/dev/null 2>&1; then
+    if "$venv_python" -m pip install --quiet \
+      --disable-pip-version-check "$JEDI_VERSION_SPEC" >/dev/null 2>&1
+    then
+      echo "  Installed jedi (better Python completion) into" \
+        "Mini's own virtualenv"
+    else
+      echo "  Could not install jedi (no network?)" \
+        "- Mini will still work, just without jedi-powered completion."
+    fi
+  fi
+}
 
 rc_files() {
   for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" \
@@ -92,10 +127,18 @@ LIBDIR=$libdir
 BINDIR=$bindir
 EOF
 
+venv_dir="$libdir/venv"
+ensure_mini_venv "$venv_dir"
+if [ -x "$venv_dir/bin/python3" ]; then
+  python_for_wrapper="$venv_dir/bin/python3"
+else
+  python_for_wrapper="python3"
+fi
+
 wrapper="$(mktemp)"
 cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
-exec python3 "$libdir/src/main.py" "\$@"
+exec "$python_for_wrapper" "$libdir/src/main.py" "\$@"
 EOF
 install -m 0755 "$wrapper" "$bindir/mini"
 rm -f "$wrapper"

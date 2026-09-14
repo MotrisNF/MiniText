@@ -89,6 +89,7 @@ class TextEditor(
         self._suggestion_dismissed_at = None
         self._import_members_cache = {}
         self._import_broken_cache = {}
+        self._jedi_attribute_cache = {}
         self._line_word_cache = {}
         self._word_pool_static = frozenset()
         self._word_pool_static_sorted = []

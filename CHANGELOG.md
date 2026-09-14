@@ -5,6 +5,52 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- The startup update check now actually offers to update, instead of
+  just pointing at `mini --update`: finding a newer commit prompts
+  "Update now? (y/n)" right there (before the editor opens, so
+  there's no unsaved buffer at risk) - accepting pulls, reinstalls
+  (the exact same path `mini --update`/`install.sh` already use, so
+  Mini's own jedi virtualenv gets created or updated too), and
+  relaunches straight into the new version; declining, or a failed
+  update, falls through to opening the editor normally on whatever
+  was already installed. `mini --update` itself is unchanged.
+- Python completion is now backed by `jedi` when it's available,
+  replacing Mini's own regex/`ast`-based type inference for
+  `name.<TAB>` and `from module import <TAB>` whenever it can answer -
+  falling back to the exact same heuristics as before whenever it
+  can't (not installed, or it genuinely finds nothing), so nothing
+  regresses without it. This also covers cases the old heuristics
+  explicitly gave up on: a chained call (`make().attr`), a subscript
+  (`items[0].attr`), a function's own return type, and more.
+  `make install` now creates a private virtualenv for Mini itself
+  (`$LIBDIR/venv`) and installs `jedi` into it - never into the
+  system Python or any project's own virtualenv - so this stays true
+  to "no external dependencies" from the *system's* point of view; a
+  dev checkout run directly with `python3 main.py` (no such venv)
+  simply runs without it, exactly as before. Re-running the installer
+  (which `mini --update` already does) leaves an already-working venv
+  alone - no network call, no reinstall - and only (re)creates or
+  reinstalls it if it's missing or broken; if venv creation or the
+  `pip install` itself fails outright (no network, no `python3-venv`
+  package, ...), Mini falls back to running on the system `python3`
+  exactly as before, with no jedi-powered extras.
+- Fixed `from module import ClassName` (and plain `from module import
+  <TAB>`) never finding a module's or class's real members when that
+  module needed something only installed in the edited project's own
+  virtualenv, not Mini's: the introspection subprocess always ran
+  with Mini's own interpreter regardless of which project was open,
+  instead of the same resolved interpreter `:run`/`:lint` already
+  use. Independent of the jedi work above - fixes this for a Mini
+  running without jedi too.
+- Fixed C/C++ completion silently hiding a name declared in an
+  `#include`d header whenever any word already in the buffer happened
+  to share the same prefix: buffer words and header words were tried
+  as separate pools in a fixed order, and the first pool with any
+  match at all won outright, discarding the other entirely. In real
+  code, where some buffer word shares a common prefix (`get_`,
+  `init_`, ...) with practically anything, this made header-declared
+  names rarely surface at all. Both pools are now merged before
+  matching.
 - A Python `import`/`from ... import ...` line that would actually
   fail now gets the same `●` marker as an overly long line, checked
   for real in an isolated subprocess (the same way `from X import`

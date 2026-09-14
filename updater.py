@@ -138,23 +138,95 @@ def _read_env(install_dir):
     return values
 
 
-def _show_update_banner():
+def _prompt_update_now():
+    """A single blocking y/n keypress, asked before the editor itself
+    ever opens (so there's no unsaved buffer at risk yet - this is
+    the one moment updating in place is entirely safe). Anything but
+    'y'/'Y' answers no, including Enter or Esc - never trap the user
+    in a loop over an unrecognized key."""
     from terminal import raw_terminal, read_key
 
     with raw_terminal():
         sys.stdout.write(
-            "A new version of Mini is available.\r\n"
-            "Run 'mini --update' to install it.\r\n"
-            "\r\n"
-            "Press any key to continue...\r\n"
+            "A new version of Mini is available. Update now? (y/n): "
         )
+        sys.stdout.flush()
+        key = read_key()
+        sys.stdout.write("\r\n")
+        sys.stdout.flush()
+    return key in ("y", "Y")
+
+
+def _wait_key(message):
+    from terminal import raw_terminal, read_key
+
+    with raw_terminal():
+        sys.stdout.write(message.replace("\n", "\r\n") + "\r\n")
         sys.stdout.flush()
         read_key()
 
 
+def _apply_update(src_dir, install_dir):
+    """Pulls and reinstalls in place - the shared core of `mini
+    --update` and the startup update prompt below. Prints why, and
+    returns False, on any failure (uncommitted changes, a failed
+    pull, a failed reinstall, or a broken `env` file); True on
+    success. Reinstalling always goes through install.sh, so this
+    also carries forward whatever it does on every install - notably
+    keeping Mini's own jedi-completion virtualenv up to date."""
+    status = _git(src_dir, "status", "--porcelain")
+    if status.stdout.strip():
+        print("The install has uncommitted changes, cancelling the update.")
+        return False
+    pull = subprocess.run(
+        ["git", "-C", src_dir, "pull", "--ff-only"], env=_GIT_ENV
+    )
+    if pull.returncode != 0:
+        print("git pull failed. Update cancelled.")
+        return False
+    env_values = _read_env(install_dir)
+    libdir = env_values.get("LIBDIR", install_dir)
+    bindir = env_values.get("BINDIR")
+    if not bindir:
+        print(
+            "Could not find the install's configuration "
+            f"({os.path.join(install_dir, 'env')}); reinstall with "
+            "'make install'."
+        )
+        return False
+    install_result = subprocess.run(
+        ["bash", os.path.join(src_dir, "install.sh"), libdir, bindir]
+    )
+    return install_result.returncode == 0
+
+
+def _relaunch(install_dir):
+    """Re-executes the freshly (re)installed `mini` launcher in this
+    same process, with the same arguments Mini itself was started
+    with - so an update applied at startup takes effect immediately,
+    instead of only on the next separate launch. This matters beyond
+    just picking up new source: install.sh may have just created (or
+    fixed) Mini's own virtualenv, changing which interpreter `mini`
+    itself now runs on - re-execing the launcher script (not just
+    re-importing modules in place) is what actually picks that up.
+    Never returns on success; falls through (letting the caller carry
+    on with the old code) if the launcher can't be found."""
+    env_values = _read_env(install_dir)
+    bindir = env_values.get("BINDIR")
+    mini_path = os.path.join(bindir, "mini") if bindir else None
+    if not mini_path or not os.path.isfile(mini_path):
+        return
+    sys.stdout.flush()
+    os.execv(mini_path, [mini_path] + sys.argv[1:])
+
+
 def check_for_updates_on_open():
     """Called on every normal launch. Silent unless an update exists,
-    and never blocks startup on network trouble."""
+    and never blocks startup on network trouble. An available update
+    is offered right there (y/n) - accepting pulls, reinstalls, and
+    relaunches into the new version before the editor ever opens;
+    declining (or a failed update) falls through to opening the
+    editor normally, on whatever version is already installed."""
     if not _is_installed_copy():
         return
     src_dir, install_dir = _paths()
@@ -168,8 +240,15 @@ def check_for_updates_on_open():
     if ahead is None:
         return
     _write_last_check(install_dir)
-    if ahead:
-        _show_update_banner()
+    if not ahead or not _prompt_update_now():
+        return
+    print("Updating...")
+    if _apply_update(src_dir, install_dir):
+        _relaunch(install_dir)
+        # Only reached if _relaunch itself couldn't find the launcher.
+        _wait_key("Updated, but couldn't restart Mini automatically.")
+    else:
+        _wait_key("Update failed - continuing on the current version.")
 
 
 def start_background_update_watcher():
@@ -235,35 +314,8 @@ def run_update_command():
     if not ahead:
         print(f"Already up to date (commit {local_hash}).")
         return
-    status = _git(src_dir, "status", "--porcelain")
-    if status.stdout.strip():
-        print(
-            "The install has uncommitted changes, "
-            "cancelling the update."
-        )
-        return
     print("Updating...")
-    pull = subprocess.run(
-        ["git", "-C", src_dir, "pull", "--ff-only"], env=_GIT_ENV
-    )
-    if pull.returncode != 0:
-        print("git pull failed. Update cancelled.")
-        return
-    env_values = _read_env(install_dir)
-    libdir = env_values.get("LIBDIR", install_dir)
-    bindir = env_values.get("BINDIR")
-    if not bindir:
-        print(
-            "Could not find the install's configuration "
-            f"({os.path.join(install_dir, 'env')}); reinstall with "
-            "'make install'."
-        )
-        return
-    install_result = subprocess.run(
-        ["bash", os.path.join(src_dir, "install.sh"), libdir, bindir]
-    )
-    if install_result.returncode != 0:
-        print("The install failed.")
+    if not _apply_update(src_dir, install_dir):
         return
     new_hash = _git(src_dir, "rev-parse", "--short", "HEAD").stdout.strip()
     print(f"Mini updated to version {new_hash}.")

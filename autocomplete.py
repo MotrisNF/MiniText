@@ -356,10 +356,15 @@ def _check_import_resolves(directory, module_name, names, python_path):
     return result.stdout.strip() == "BROKEN"
 
 
-def _introspect_module_members(directory, module_name):
+def _introspect_module_members(directory, module_name, python_path):
     """Names `from module_name import <TAB>` could offer, found by
     actually importing the module in a throwaway subprocess (with
-    `directory` on its sys.path, so local project files resolve too).
+    `directory` on its sys.path, so local project files resolve too),
+    using `python_path` - normally the project's own resolved
+    virtualenv, the same interpreter :run/:lint would use for this
+    file - not necessarily Mini's own, so a module only installed in
+    the project's virtualenv isn't wrongly treated as having no
+    members.
 
     A subprocess - not an in-process import - because this runs
     whatever top-level code the module has, including local files
@@ -368,7 +373,7 @@ def _introspect_module_members(directory, module_name):
     try:
         result = subprocess.run(
             [
-                sys.executable, "-c", _MODULE_INTROSPECTION_SCRIPT,
+                python_path, "-c", _MODULE_INTROSPECTION_SCRIPT,
                 directory, module_name,
             ],
             capture_output=True, text=True, timeout=2,
@@ -380,15 +385,15 @@ def _introspect_module_members(directory, module_name):
     return set(result.stdout.split())
 
 
-def _introspect_class_members(directory, module_name, class_name):
+def _introspect_class_members(directory, module_name, class_name, python_path):
     """Like `_introspect_module_members`, but for one class imported
     from a module (`from module_name import ClassName`), so `thing.`
     can offer that class's own methods instead of every builtin type's
-    methods mixed together."""
+    methods mixed together. Same `python_path` reasoning as above."""
     try:
         result = subprocess.run(
             [
-                sys.executable, "-c", _CLASS_INTROSPECTION_SCRIPT,
+                python_path, "-c", _CLASS_INTROSPECTION_SCRIPT,
                 directory, module_name, class_name,
             ],
             capture_output=True, text=True, timeout=2,
@@ -398,6 +403,80 @@ def _introspect_class_members(directory, module_name, class_name):
     if result.returncode != 0:
         return set()
     return set(result.stdout.split())
+
+
+_jedi_module = None
+_jedi_import_attempted = False
+_jedi_environment_cache = {}
+
+
+def _get_jedi():
+    """Mini's own bundled `jedi`, if this install has one (a private
+    venv `make install` creates and manages - see install.sh) - else
+    None, imported at most once per session. Never a hard dependency:
+    every caller below treats None (or any failure past this point)
+    as "fall back to Mini's own heuristics", exactly as if jedi had
+    never been tried - so a dev checkout run straight with `python3
+    main.py`, with no such venv, still works exactly as before."""
+    global _jedi_module, _jedi_import_attempted
+    if not _jedi_import_attempted:
+        _jedi_import_attempted = True
+        try:
+            import jedi  # type: ignore[import-not-found]
+        except ImportError:
+            jedi = None
+        _jedi_module = jedi
+    return _jedi_module
+
+
+def _jedi_environment(python_path):
+    """A cached `jedi.Environment` for `python_path` (the project's
+    own resolved interpreter, same as everywhere else here) - or None
+    if jedi isn't available or can't be pointed at it, in which case
+    callers fall back to Mini's own heuristics."""
+    jedi = _get_jedi()
+    if jedi is None:
+        return None
+    if python_path not in _jedi_environment_cache:
+        environment = None
+        try:
+            environment = jedi.create_environment(python_path, safe=False)
+        except Exception:
+            try:
+                environment = jedi.get_default_environment()
+            except Exception:
+                environment = None
+        _jedi_environment_cache[python_path] = environment
+    return _jedi_environment_cache[python_path]
+
+
+def _jedi_completions(source_text, file_name, line, column, python_path):
+    """Completion name strings from jedi at (1-indexed `line`,
+    0-indexed `column`) in `source_text`, resolving imports with
+    `python_path` the same way :run/:lint would - or None if jedi
+    isn't installed, or the call fails for any reason (an
+    unsupported jedi version, a still-invalid buffer, a slow/broken
+    environment probe, ...), so callers can fall back to Mini's own
+    heuristics exactly as if jedi had never been tried. Deliberately
+    catches every exception, not just expected ones: jedi is a large
+    third-party parser/inference engine, and the entire point of
+    trying it here is best-effort - it must never be able to break or
+    freeze suggestions, only improve them when it works."""
+    jedi = _get_jedi()
+    if jedi is None:
+        return None
+    environment = _jedi_environment(python_path)
+    try:
+        script = jedi.Script(
+            code=source_text, path=file_name, environment=environment,
+        )
+        completions = script.complete(line, column)
+        return {
+            completion.name for completion in completions
+            if not completion.name.startswith("__")
+        }
+    except Exception:
+        return None
 
 
 def _local_class_methods(source_text, class_name):
@@ -698,8 +777,15 @@ class SuggestionMixin:
         ) or os.getcwd()
         cache_key = (directory, module_name)
         if cache_key not in self._import_members_cache:
-            self._import_members_cache[cache_key] = (
-                _introspect_module_members(directory, module_name)
+            python_path = self._resolve_python_executable()
+            jedi_pool = _jedi_completions(
+                "\n".join(self.lines), self.file_name,
+                self.line + 1, self.column, python_path,
+            )
+            self._import_members_cache[cache_key] = jedi_pool or (
+                _introspect_module_members(
+                    directory, module_name, python_path
+                )
             )
         return self._import_members_cache[cache_key]
 
@@ -759,10 +845,38 @@ class SuggestionMixin:
         source_lines[self.line] = ""
         return "\n".join(source_lines)
 
+    def _jedi_attribute_completions(self, dot_index):
+        """Like `_infer_attribute_pool`, but backed by jedi (when this
+        install has it - see `_get_jedi`) instead of Mini's own
+        regex/`ast` heuristics: since jedi actually parses and
+        resolves the whole buffer, this also covers cases the
+        heuristics below give up on outright - a chained call
+        (`foo().bar`), a subscript (`foo[0].bar`), or a name imported
+        from a module that isn't on Mini's own interpreter (the exact
+        bug this was added for: an imported class whose package only
+        lives in the project's virtualenv). Cached per (buffer
+        identity, line, dot position) - not per keystroke past the
+        dot - since jedi's own analysis of "what does the thing before
+        this dot resolve to" doesn't change as more of the attribute
+        name is typed after it; like every other cache here, it's
+        never invalidated mid-session, so an edit far above a `name.`
+        already completed once won't be picked up until Mini restarts."""
+        cache_key = (id(self.lines), self.line, dot_index)
+        if cache_key not in self._jedi_attribute_cache:
+            python_path = self._resolve_python_executable()
+            self._jedi_attribute_cache[cache_key] = _jedi_completions(
+                "\n".join(self.lines), self.file_name,
+                self.line + 1, self.column, python_path,
+            )
+        return self._jedi_attribute_cache[cache_key]
+
     def _infer_attribute_pool(self, name):
         """Names to offer for `name.<TAB>`, narrowed to name's actual
         type/class when it can be worked out from the buffer - or
-        None to fall back to the generic mixed-type vocabulary."""
+        None to fall back to the generic mixed-type vocabulary. Only
+        reached when `_jedi_attribute_completions` couldn't answer
+        (no jedi installed, or it genuinely found nothing) - see
+        `_compute_python_suggestion_matches`."""
         if name == "self":
             return _enclosing_class_members(
                 self._blanked_source_text(), self.line
@@ -793,7 +907,8 @@ class SuggestionMixin:
         if cache_key not in self._import_members_cache:
             self._import_members_cache[cache_key] = (
                 _introspect_class_members(
-                    directory, module_name, original_name
+                    directory, module_name, original_name,
+                    self._resolve_python_executable(),
                 )
             )
         return self._import_members_cache[cache_key]
@@ -840,7 +955,10 @@ class SuggestionMixin:
         )
         if is_attribute:
             dot_index = prefix_start - 1
-            if (
+            jedi_inferred = self._jedi_attribute_completions(dot_index)
+            if jedi_inferred:
+                inferred = jedi_inferred
+            elif (
                 dot_index > 0
                 and line[dot_index - 1] in ("'", '"')
                 and _is_inside_string_or_comment(line, dot_index - 1)
@@ -927,9 +1045,13 @@ class SuggestionMixin:
         vocabulary = CPP_KEYWORDS if language == "cpp" else C_KEYWORDS
         type_names = CPP_TYPE_NAMES if language == "cpp" else C_TYPE_NAMES
         literals = CPP_LITERALS if language == "cpp" else set()
+        # Buffer words and included-header words are equally real
+        # identifiers - neither should hide the other just because it
+        # happens to be tried first, so they're merged into one pool
+        # before falling back to the keyword vocabulary.
         for pool in (
-            self._buffer_words_matching(prefix),
-            self._included_header_words_matching(prefix),
+            self._buffer_words_matching(prefix)
+            | self._included_header_words_matching(prefix),
             vocabulary | type_names | literals,
         ):
             matches = sorted(
