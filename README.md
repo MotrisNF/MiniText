@@ -105,8 +105,9 @@ usable as a general-purpose text editor for anything else.
   `PATH` for its own include search directories (the same
   "introspect the real thing" approach as Python's module
   completion, one layer down) - needing none of them just means this
-  one specific case offers nothing, same as `:lint` without
-  `flake8`/`mypy` installed. Beyond completing the `#include` line
+  one specific case offers nothing, the same as `:lint` finding
+  neither a project's own `flake8`/`mypy` nor Mini's bundled fallback
+  for them (see "Installation"). Beyond completing the `#include` line
   itself, every header a file's own `#include`s name - local or
   system, resolved the exact same way - actually gets read and
   word-scanned too, so a name declared in one of them (`#include
@@ -176,8 +177,8 @@ usable as a general-purpose text editor for anything else.
   ANSI escape sequences and 256 colors.
 - Python 3.10 or newer. No packages need to be installed by hand -
   Mini needs none to run, and `make install` manages its own private
-  copy of the one optional completion dependency it can use (see
-  "Installation" below).
+  copies of the few optional extras it can use (see "Installation"
+  below).
 
 ## Installation
 
@@ -191,15 +192,16 @@ This installs the `mini` command for the current user:
 
 - The source files are copied to `~/.local/share/mini`.
 - A private virtualenv for Mini itself is created at
-  `~/.local/share/mini/venv`, with `jedi` installed into it for
-  better Python completion (see the `name.`/`from module import`
-  description above) - never into your system Python or any
-  project's own virtualenv. Mini runs from this virtualenv rather
-  than the system `python3` from here on, though it needs nothing in
-  it to work at all. If it can't be created or `jedi` can't be
+  `~/.local/share/mini/venv`, with `jedi` (better Python completion -
+  see the `name.`/`from module import` description above), `flake8`,
+  and `mypy` (a fallback for `:lint` - see its own description below)
+  installed into it - never into your system Python or any project's
+  own virtualenv. Mini runs from this virtualenv rather than the
+  system `python3` from here on, though it needs nothing in it to
+  work at all. If it can't be created or the packages can't be
   installed (no network, no `python3-venv` package, ...), Mini falls
-  back to the system `python3` instead, without jedi's extras -
-  either way the install still succeeds. Re-running the installer (as
+  back to the system `python3` instead, without those extras - either
+  way the install still succeeds. Re-running the installer (as
   `mini --update` already does) leaves an already-working virtualenv
   alone rather than recreating it every time.
 - A launcher script is installed at `~/.local/bin/mini`.
@@ -376,8 +378,19 @@ whatever's on the system `PATH`.
 
 `:lint` saves the file and runs `flake8` then `mypy` on it in that
 same output panel (so it's Ctrl+C-able and closes with `Esc` the same
-way), deleting `.mypy_cache` once both finish. Needs `flake8` and
-`mypy` on your `PATH` - Mini doesn't install or bundle either.
+way), deleting `.mypy_cache` once both finish. A project's own
+`flake8`/`mypy` (found the same way as above) are always used first;
+failing that, Mini's own bundled copies - installed into its private
+virtualenv alongside jedi (see "Installation") - are tried as a
+fallback, so `:lint` still works for a project with neither. `mypy`
+is always told to resolve imports as the project's own interpreter
+would (`--python-executable`), even when it's Mini's own bundled
+`mypy` doing the checking - so falling back to it still means real
+type-checking against what the project actually has installed,
+instead of "cannot find module" for every third-party import Mini's
+own virtualenv doesn't happen to have. If neither the project nor
+Mini has them (no network at install time, say), `:lint` fails
+outright, same as always.
 
 `:cmd <text>` runs `text` as a `bash -c` command in that same panel -
 for anything that isn't about running the current file itself

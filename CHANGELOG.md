@@ -5,6 +5,23 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.5.0 - 2026-09-14
+
+- `:lint` now falls back to `flake8`/`mypy` bundled in Mini's own
+  private virtualenv (installed alongside jedi - see "Installation")
+  when a project has neither on its own `PATH` - previously `:lint`
+  just failed outright in that case. A project's own `flake8`/`mypy`,
+  wherever they are, are still always used ahead of Mini's. `mypy` is
+  now always run with `--python-executable` pointed at the project's
+  own resolved interpreter, regardless of which `mypy` binary actually
+  runs it - so falling back to Mini's copy still resolves the
+  project's real imports correctly (a "missing library stubs" note
+  for an untyped dependency, say) instead of flagging every
+  third-party import as unresolvable just because Mini's own
+  virtualenv doesn't happen to have it installed. `flake8` needs no
+  such flag - it's pure AST-based static analysis, never dependent on
+  what's actually importable.
+
 ## 1.4.1 - 2026-09-14
 
 - Fixed `Enter` accepting the highlighted entry of an open suggestion

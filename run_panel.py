@@ -67,6 +67,20 @@ class RunPanelMixin:
         env["PATH"] = bin_directory + os.pathsep + env.get("PATH", "")
         return env
 
+    def _lint_environment(self, python_path):
+        """Env for :lint specifically: the same PATH as
+        `_environment_for`, with Mini's own bundled flake8/mypy
+        (installed alongside jedi - see install.sh) appended as a
+        last-resort fallback. A project's own flake8/mypy, if it has
+        them anywhere on its PATH, are always found first - Mini's
+        copies only ever get reached when a project has neither.
+        Never used for :run or :cmd - only :lint should ever fall
+        back to a tool that isn't actually the project's own."""
+        env = self._environment_for(python_path)
+        mini_bin_directory = os.path.dirname(sys.executable)
+        env["PATH"] = env["PATH"] + os.pathsep + mini_bin_directory
+        return env
+
     def _start_process(self, command, label, env=None, cwd=None,
                        save_first=True):
         """Runs `command` in a pty, streaming its output live into the
@@ -129,10 +143,25 @@ class RunPanelMixin:
             return
         python_path = self._resolve_python_executable()
         name = shlex.quote(os.path.basename(self.file_name))
-        shell_command = f"flake8 {name}; mypy {name}; rm -rf .mypy_cache"
+        # --python-executable makes mypy resolve imports/stubs against
+        # the project's own interpreter regardless of *which* mypy
+        # binary actually ends up running - its own (found first) or
+        # Mini's bundled fallback (see _lint_environment) - so falling
+        # back to Mini's copy still checks the file against what the
+        # project actually has installed, instead of spamming
+        # "cannot find module" for every third-party import Mini's
+        # own virtualenv doesn't happen to have. flake8 needs no such
+        # flag - it's pure AST-based static analysis, never dependent
+        # on what's actually importable.
+        quoted_python_path = shlex.quote(python_path)
+        shell_command = (
+            f"flake8 {name}; "
+            f"mypy --python-executable {quoted_python_path} {name}; "
+            "rm -rf .mypy_cache"
+        )
         self._start_process(
             ["sh", "-c", shell_command], "lint",
-            env=self._environment_for(python_path),
+            env=self._lint_environment(python_path),
         )
 
     def _start_cmd(self, shell_text):
