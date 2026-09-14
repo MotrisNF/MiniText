@@ -230,12 +230,21 @@ from a checkout.
 
 ### Running a file
 
-`:run` (or `:terminal`) saves the current `.py` file, runs it with
-`python3`, and splits the code area horizontally to show its output
-live underneath as it prints. It uses a real pty for the child
-process, so `input()` works: type while the panel is focused and
-press Enter, exactly like a normal terminal. Ctrl+C sends an
-interrupt to the running program (it does not affect Mini itself).
+`:run` (or `:terminal`) saves the current `.py` file, runs it, and
+splits the code area horizontally to show its output live underneath
+as it prints. It uses a real pty for the child process, so `input()`
+works: type while the panel is focused and press Enter, exactly like
+a normal terminal. Ctrl+C sends an interrupt to the running program
+(it does not affect Mini itself).
+
+Which `python3` runs the file: if the shell Mini was launched from
+already has a virtualenv active (`VIRTUAL_ENV` is set), that one is
+used outright; otherwise Mini looks for a virtualenv of its own
+(`.venv`, `venv`, `env`, or `.env`) starting at the file's own
+directory and walking up to the worktree root, and falls back to
+Mini's own interpreter if none is found. The same resolution feeds
+`:lint` too, so a project's own `flake8`/`mypy` are used ahead of
+whatever's on the system `PATH`.
 `Esc` unfocuses the panel while the program is still running, leaving
 it going in the background - the output keeps updating even without
 pressing anything - and closes the panel once you press `Esc` after
@@ -417,3 +426,8 @@ Mini is intentionally small. Some notable limitations:
   as the same 4 columns used everywhere else in Mini), while flake8's
   own E501 counts raw characters (a tab is 1) - the two only disagree
   when a line mixes tabs with long content, which is rare.
+- Virtualenv detection for `:run`/`:lint` only recognizes the Unix
+  `bin/python3` (or `bin/python`) layout, matching Mini's own
+  Linux/Unix-only reach - and treats a directory literally named
+  `.env` as a virtualenv too, even though that name is more commonly
+  used for environment-variable files elsewhere.

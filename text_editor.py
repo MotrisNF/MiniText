@@ -144,6 +144,10 @@ def _is_word_char(character):
     return character.isalnum() or character == "_"
 
 
+_WORD_PATTERN = re.compile(r"\w+")
+_LINE_WORD_CACHE_LIMIT = 20000
+
+
 def _is_inside_string_or_comment(line, column):
     """Whether `column` sits inside a string literal or a comment,
     scanning from the start of `line` - so an unterminated string
@@ -296,6 +300,48 @@ def _reset_child_signals():
     # normally.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     signal.signal(signal.SIGQUIT, signal.SIG_DFL)
+
+
+_VENV_DIR_NAMES = (".venv", "venv", "env", ".env")
+
+
+def _venv_python_path(venv_directory):
+    """The interpreter inside `venv_directory`, if it looks like a real
+    virtualenv (has a bin/python3 or bin/python) - else None."""
+    for name in ("python3", "python"):
+        candidate = os.path.join(venv_directory, "bin", name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _active_venv_python():
+    """The interpreter of an already-activated virtualenv - VIRTUAL_ENV
+    is set by `source .../bin/activate`, so this is what the user
+    explicitly chose in the shell Mini was launched from, and it takes
+    priority over anything Mini finds on its own."""
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    return _venv_python_path(virtual_env) if virtual_env else None
+
+
+def _find_project_venv_python(start_directory, root_directory):
+    """Walks from `start_directory` up to (and including)
+    `root_directory`, looking for one of _VENV_DIR_NAMES with a real
+    interpreter inside - stopping at the project root instead of
+    climbing arbitrarily far up the filesystem."""
+    current = os.path.abspath(start_directory)
+    root = os.path.abspath(root_directory)
+    while True:
+        for name in _VENV_DIR_NAMES:
+            python_path = _venv_python_path(os.path.join(current, name))
+            if python_path:
+                return python_path
+        if current == root:
+            return None
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
 
 
 _RUN_ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -525,6 +571,8 @@ class TextEditor:
         self.suggestion_index = 0
         self._suggestion_dismissed_at = None
         self._import_members_cache = {}
+        self._line_word_cache = {}
+        self._worktree_entries_cache = None
 
     BUFFER_ATTRIBUTES = (
         "file_name", "lines", "line", "column", "selection_anchor",
@@ -1056,18 +1104,22 @@ class TextEditor:
         return line[start:self.column]
 
     def _collect_buffer_words(self):
+        """Every identifier-like word used anywhere in the buffer, for
+        autocompletion. Cached per line *content* rather than line
+        position, so retyping one line doesn't cost more than that one
+        line - unlike a position-keyed cache, this stays correct no
+        matter how lines are inserted, deleted, or reordered, since
+        the key IS the content: unrelated lines are always a cache
+        hit, even across undo/redo or switching tabs."""
+        cache = self._line_word_cache
         words = set()
         for line in self.lines:
-            word = ""
-            for character in line:
-                if _is_word_char(character):
-                    word += character
-                else:
-                    if word:
-                        words.add(word)
-                    word = ""
-            if word:
-                words.add(word)
+            line_words = cache.get(line)
+            if line_words is None:
+                line_words = frozenset(_WORD_PATTERN.findall(line))
+                if len(cache) < _LINE_WORD_CACHE_LIMIT:
+                    cache[line] = line_words
+            words |= line_words
         return words
 
     def _local_module_names(self):
@@ -1639,6 +1691,17 @@ class TextEditor:
         self.status = f"Opened {path}"
 
     def _worktree_entries(self):
+        """The flattened, currently-visible worktree listing (one
+        entry per row the panel draws). Rebuilding this means walking
+        the filesystem, so it's cached across renders -
+        `_invalidate_worktree_cache` is called wherever something that
+        should change the listing actually happens (expanding or
+        collapsing a directory, creating or deleting an entry, or
+        (re)showing/focusing the panel, to also pick up changes made
+        outside Mini)."""
+        if self._worktree_entries_cache is not None:
+            return self._worktree_entries_cache
+
         entries = []
 
         def walk(directory, depth):
@@ -1655,7 +1718,11 @@ class TextEditor:
                     walk(entry.path, depth + 1)
 
         walk(self.worktree_root, 0)
+        self._worktree_entries_cache = entries
         return entries
+
+    def _invalidate_worktree_cache(self):
+        self._worktree_entries_cache = None
 
     def _release_worktree_focus(self):
         self.worktree_focused = False
@@ -1663,10 +1730,40 @@ class TextEditor:
             self.worktree_visible = False
             self.worktree_visible_because_of_focus = False
 
-    def _start_process(self, command, label):
+    def _resolve_python_executable(self):
+        """Which python3 :run/:lint should use: an already-activated
+        virtualenv wins outright; otherwise Mini looks for one of its
+        own (.venv/venv/env/.env) starting at the file's own directory
+        and walking up to the worktree root; failing that, Mini's own
+        interpreter."""
+        python_path = _active_venv_python()
+        if python_path:
+            return python_path
+        start_directory = (
+            os.path.dirname(os.path.abspath(self.file_name))
+            if self.file_name else self.worktree_root
+        )
+        python_path = _find_project_venv_python(
+            start_directory, self.worktree_root
+        )
+        return python_path or sys.executable
+
+    def _environment_for(self, python_path):
+        """Env for a :run/:lint subprocess: puts `python_path`'s own
+        bin/ directory first on PATH, so a project virtualenv's own
+        flake8/mypy (found by name inside :lint's shell command) are
+        picked up ahead of whatever's on the system PATH."""
+        env = dict(os.environ)
+        bin_directory = os.path.dirname(python_path)
+        env["PATH"] = bin_directory + os.pathsep + env.get("PATH", "")
+        return env
+
+    def _start_process(self, command, label, env=None):
         """Runs `command` in a pty, streaming its output live into the
         same panel `:run`/`:terminal` uses - shared by `:lint` too, so
-        both get live output, Ctrl+C, and Esc-to-close for free."""
+        both get live output, Ctrl+C, and Esc-to-close for free.
+        `env`, when given, replaces the child's environment (used to
+        put a virtualenv's own bin/ directory first on PATH)."""
         global _run_output_fd
         if self.run_process is not None and self.run_process.poll() is None:
             self.run_focused = True
@@ -1683,6 +1780,7 @@ class TextEditor:
                 cwd=os.path.dirname(self.file_name) or ".",
                 close_fds=True,
                 preexec_fn=_reset_child_signals,
+                env=env,
             )
         except OSError as error:
             os.close(master_fd)
@@ -1701,18 +1799,24 @@ class TextEditor:
         if not self._is_python_file():
             self.status = "Can only run .py files"
             return
+        python_path = self._resolve_python_executable()
         self._start_process(
-            [sys.executable, os.path.basename(self.file_name)],
-            f"python3 {self.file_name}",
+            [python_path, os.path.basename(self.file_name)],
+            f"{python_path} {self.file_name}",
+            env=self._environment_for(python_path),
         )
 
     def _start_lint(self):
         if not self._is_python_file():
             self.status = "Can only lint .py files"
             return
+        python_path = self._resolve_python_executable()
         name = shlex.quote(os.path.basename(self.file_name))
         shell_command = f"flake8 {name}; mypy {name}; rm -rf .mypy_cache"
-        self._start_process(["sh", "-c", shell_command], "lint")
+        self._start_process(
+            ["sh", "-c", shell_command], "lint",
+            env=self._environment_for(python_path),
+        )
 
     def _pump_run_output(self):
         try:
@@ -1796,6 +1900,7 @@ class TextEditor:
         if is_directory and path not in self.worktree_expanded:
             self.worktree_expanded.add(path)
             self.worktree_selected_dir = path
+            self._invalidate_worktree_cache()
 
     def _worktree_collapse(self, entries):
         if not entries:
@@ -1804,6 +1909,7 @@ class TextEditor:
         if is_directory and path in self.worktree_expanded:
             self.worktree_expanded.discard(path)
             self.worktree_selected_dir = os.path.dirname(path)
+            self._invalidate_worktree_cache()
 
     def _worktree_activate(self, entries):
         if not entries:
@@ -1845,6 +1951,7 @@ class TextEditor:
         except OSError as error:
             self.status = f"Could not create '{name}': {error}"
             return
+        self._invalidate_worktree_cache()
         self.status = f"Created {new_path}"
 
     def _worktree_delete(self, entries):
@@ -1863,6 +1970,7 @@ class TextEditor:
         except OSError as error:
             self.status = f"Could not delete '{name}': {error}"
             return
+        self._invalidate_worktree_cache()
         if self.file_name == path:
             self.status = f"Deleted {path} (still open here, unsaved)"
         else:
@@ -2083,7 +2191,9 @@ class TextEditor:
             self._paste_before_line(argument)
         elif name == "w" and argument is None:
             self.worktree_visible = not self.worktree_visible
-            if not self.worktree_visible:
+            if self.worktree_visible:
+                self._invalidate_worktree_cache()
+            else:
                 self.worktree_focused = False
             self.worktree_visible_because_of_focus = False
         elif name in ("run", "terminal") and argument is None:
@@ -2240,6 +2350,7 @@ class TextEditor:
                             self.worktree_visible = True
                             self.worktree_visible_because_of_focus = True
                         self.worktree_focused = True
+                        self._invalidate_worktree_cache()
                     elif (
                         self.mode == "visual"
                         and key == "\t"
