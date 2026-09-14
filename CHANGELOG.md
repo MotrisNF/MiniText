@@ -5,6 +5,13 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Internal: split the single ~2600-line `text_editor.py` into
+  focused modules by concern (`rendering.py`, `editing.py`,
+  `commands.py`, `tabs.py`, `worktree.py`, `run_panel.py`,
+  `autocomplete.py`, `highlighting.py`, `venv_detect.py`,
+  `terminal.py`), composed back together as mixins on the
+  `TextEditor` class in a much smaller `text_editor.py`. No behavior
+  change - see the "Project structure" table in the README.
 - Added `Ctrl+H` in the worktree panel, toggling whether hidden
   files/directories (name starting with `.`) are shown - hidden by
   default, at every depth.

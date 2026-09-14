@@ -416,16 +416,26 @@ never prevents the editor from starting.
 
 ## Project structure
 
-| File            | Purpose                                                  |
-|-----------------|-------------------------------------------------------------|
-| `main.py`       | Command-line entry point                                    |
-| `text_editor.py`| The editor itself: terminal handling, rendering, key handling, editing commands, and the worktree explorer |
-| `theme.py`      | Loads and validates `~/.minirc`, and resolves the active theme into ANSI color codes |
-| `updater.py`    | `mini --update` and the once-a-day update check on startup    |
-| `install.sh`    | Installs or uninstalls Mini and its default configuration    |
-| `Makefile`      | `make install` / `make uninstall` wrappers around `install.sh` |
-| `VERSION`       | Current version, printed by `mini --version`                 |
-| `CHANGELOG.md`  | What changed in each version                                 |
+| File               | Purpose                                                  |
+|--------------------|-------------------------------------------------------------|
+| `main.py`          | Command-line entry point                                    |
+| `text_editor.py`   | The `TextEditor` class itself: top-level state, `__init__`, and the main key-reading loop that routes each keypress to whichever mixin below handles it |
+| `rendering.py`     | Turning editor state into the ANSI-escaped frame written to the terminal: the tab bar, bracket/quote matching, the help screen, `render()` |
+| `editing.py`       | Core buffer mutations: cursor movement, undo/redo, selection, insert/backspace/delete, paste, auto-indenting Enter |
+| `commands.py`      | The `:` command line: parsing, dispatch, save/close, line-numbered operations, search |
+| `tabs.py`          | Multi-tab buffer lifecycle: switching tabs, reading files from disk |
+| `worktree.py`      | The worktree file explorer panel: listing, expanding/collapsing, creating/deleting entries |
+| `run_panel.py`     | `:run`/`:lint`/`:cmd`'s shared pty-backed output panel |
+| `autocomplete.py`  | Word/keyword/module/type-aware suggestions for `.py` files |
+| `highlighting.py`  | Python syntax highlighting for one line at a time            |
+| `venv_detect.py`   | Virtualenv detection for `:run`/`:lint`/`:cmd`                |
+| `terminal.py`      | Raw terminal mode, key reading, and the resize/output wakeup plumbing |
+| `theme.py`         | Loads and validates `~/.minirc`, and resolves the active theme into ANSI color codes |
+| `updater.py`       | `mini --update` and the once-a-day update check on startup    |
+| `install.sh`       | Installs or uninstalls Mini and its default configuration    |
+| `Makefile`         | `make install` / `make uninstall` wrappers around `install.sh` |
+| `VERSION`          | Current version, printed by `mini --version`                 |
+| `CHANGELOG.md`     | What changed in each version                                 |
 
 ## Limitations
 

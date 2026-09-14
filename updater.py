@@ -126,7 +126,7 @@ def _read_env(install_dir):
 
 
 def _show_update_banner():
-    from text_editor import raw_terminal, read_key
+    from terminal import raw_terminal, read_key
 
     with raw_terminal():
         sys.stdout.write(
