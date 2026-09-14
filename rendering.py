@@ -6,6 +6,7 @@ import os
 import sys
 
 import theme
+from autocomplete import MAX_SUGGESTION_DROPDOWN_ITEMS
 from editing import BRACKET_PAIRS, CLOSING_TO_OPENING, QUOTE_CHARACTERS
 from highlighting import _highlight
 from terminal import _get_terminal_size
@@ -261,10 +262,37 @@ class RenderMixin:
             tab_bar_row = f"{self._pad_sidebar('')}{separator}{tab_bar}"
         else:
             tab_bar_row = tab_bar
-        output = [
-            "\x1b[2J\x1b[H", theme.BASE_STYLE,
-            f"{tab_bar_row}\r\n",
-        ]
+
+        # Differential rendering: a row only gets re-sent to the
+        # terminal when its own text actually changed since the last
+        # frame - typing fast on one line, the common case, then only
+        # ever redraws that one row instead of the whole screen. A
+        # resize or the help screen (which paints over everything
+        # itself) sets _force_full_redraw; a shrinking/closing
+        # suggestion dropdown - the one overlay that isn't part of any
+        # row's own content - is caught here, since it can leave
+        # stale cells behind on the rows it used to cover otherwise.
+        dropdown_will_show = (
+            self.mode == "insert" and self.command is None
+            and self.search_query is None and not self.worktree_focused
+            and not self.run_focused
+            and len(self.suggestion_matches[:MAX_SUGGESTION_DROPDOWN_ITEMS])
+            >= 2
+        )
+        full_redraw = (
+            self._force_full_redraw
+            or (terminal_width, terminal_height) != self._last_terminal_size
+            or dropdown_will_show or self._dropdown_was_shown
+        )
+        self._dropdown_was_shown = dropdown_will_show
+        self._last_terminal_size = (terminal_width, terminal_height)
+        self._force_full_redraw = False
+
+        output = [theme.BASE_STYLE]
+        if full_redraw:
+            output.append("\x1b[2J")
+            self._last_rendered_rows = {}
+        output.append(f"\x1b[1;1H\x1b[K{tab_bar_row}")
         ruler_overlay = []
         for row_offset in range(visible_rows):
             if run_visible and row_offset == editor_rows:
@@ -402,7 +430,11 @@ class RenderMixin:
                 )
             else:
                 row_text = editor_row
-            output.append(f"\x1b[{terminal_row};1H\x1b[K{row_text}")
+            if full_redraw or self._last_rendered_rows.get(
+                row_offset
+            ) != row_text:
+                output.append(f"\x1b[{terminal_row};1H\x1b[K{row_text}")
+            self._last_rendered_rows[row_offset] = row_text
 
         output.extend(ruler_overlay)
         output.append(f"\x1b[{input_row};1H\x1b[K")

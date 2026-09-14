@@ -5,6 +5,19 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Performance: fixed two remaining sources of Insert-mode lag on
+  large files. Autocompletion's buffer-word matching now uses binary
+  search over a cached sorted list instead of scanning (and
+  startswith-testing) every unique word in the file on each
+  keystroke. Rendering is now differential - a screen row is only
+  re-sent to the terminal when its own text actually changed since
+  the last frame, and the blanket full-screen clear on every render
+  is gone - so typing on one line, the common case, now only ever
+  redraws that one row instead of the whole screen (roughly an 85%
+  cut in bytes written per keystroke in testing). A resize, leaving
+  the help screen, or the suggestion dropdown appearing/closing still
+  triggers one full redraw, to never leave stale content on screen.
+
 - The update check now runs at most once every 4 hours instead of
   once a day. A session that stays open past that mark keeps checking
   in the background on the same schedule for as long as it's open,

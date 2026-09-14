@@ -5,6 +5,7 @@ locally-defined classes via ast, or classes/modules introspected in
 an isolated subprocess)."""
 
 import ast
+import bisect
 import builtins
 import keyword
 import os
@@ -292,9 +293,21 @@ class SuggestionMixin:
             if index != self.line:
                 words |= self._line_words(line)
         self._word_pool_static = words
+        # Sorted once here, not on every keystroke: lets
+        # _buffer_words_matching find a prefix's matches by binary
+        # search instead of scanning every unique word in the file.
+        self._word_pool_static_sorted = sorted(words)
         self._word_pool_lines_ref = self.lines
         self._word_pool_line_count = len(self.lines)
         self._word_pool_line_index = self.line
+
+    def _ensure_word_pool_fresh(self):
+        if (
+            self.lines is not self._word_pool_lines_ref
+            or len(self.lines) != self._word_pool_line_count
+            or self.line != self._word_pool_line_index
+        ):
+            self._rebuild_static_word_pool()
 
     def _collect_buffer_words(self):
         """Every identifier-like word used anywhere in the buffer, for
@@ -304,17 +317,38 @@ class SuggestionMixin:
         line the cursor is on changes - so typing fast on one line,
         the common case this exists for, no longer re-scans the whole
         file on every keystroke: only the cursor's own line (cheap -
-        it's the one thing actually changing) is re-scanned fresh."""
-        if (
-            self.lines is not self._word_pool_lines_ref
-            or len(self.lines) != self._word_pool_line_count
-            or self.line != self._word_pool_line_index
-        ):
-            self._rebuild_static_word_pool()
+        it's the one thing actually changing) is re-scanned fresh.
+
+        Only used for the (rare) import-context pool, which needs the
+        *whole* set - see _buffer_words_matching for the hot path."""
+        self._ensure_word_pool_fresh()
         current_line = (
             self.lines[self.line] if 0 <= self.line < len(self.lines) else ""
         )
         return self._word_pool_static | self._line_words(current_line)
+
+    def _buffer_words_matching(self, prefix):
+        """Buffer words starting with `prefix` - the hot path for
+        ordinary typing. Finds them by binary search over the cached,
+        sorted static pool instead of scanning (and startswith-testing)
+        every unique word in the file on every keystroke, the same way
+        _collect_buffer_words itself avoids re-scanning every *line*:
+        a file can easily have thousands of unique words, so filtering
+        all of them by prefix every keystroke doesn't scale any better
+        than not caching the word set in the first place."""
+        self._ensure_word_pool_fresh()
+        sorted_words = self._word_pool_static_sorted
+        low = bisect.bisect_left(sorted_words, prefix)
+        high = bisect.bisect_left(sorted_words, prefix + "\uffff")
+        matches = set(sorted_words[low:high])
+        current_line = (
+            self.lines[self.line] if 0 <= self.line < len(self.lines) else ""
+        )
+        matches |= {
+            word for word in self._line_words(current_line)
+            if word.startswith(prefix)
+        }
+        return matches
 
     def _local_module_names(self):
         directory = (
@@ -447,7 +481,7 @@ class SuggestionMixin:
             )
         return self._import_members_cache[cache_key]
 
-    def _suggestion_pools(self, prefix_start, line):
+    def _suggestion_pools(self, prefix_start, line, prefix):
         context_before = line[:prefix_start]
         from_import_match = FROM_IMPORT_NAMES_PATTERN.match(context_before)
         if from_import_match:
@@ -457,12 +491,14 @@ class SuggestionMixin:
             ) - already_imported
             return (members,)
         if IMPORT_CONTEXT_PATTERN.match(context_before):
+            # Rare/brief context (right after "import "/"from ") - not
+            # hot enough to need _buffer_words_matching's shortcut.
             return (
                 self._local_module_names(),
                 MODULE_VOCABULARY,
                 self._collect_buffer_words(),
             )
-        return (self._collect_buffer_words(), PYTHON_VOCABULARY)
+        return (self._buffer_words_matching(prefix), PYTHON_VOCABULARY)
 
     def _compute_suggestion_matches(self):
         if self.mode != "insert" or not self._is_python_file():
@@ -499,11 +535,13 @@ class SuggestionMixin:
             elif len(prefix) < MIN_SUGGESTION_PREFIX:
                 return []
             else:
-                pools = (self._collect_buffer_words(), ATTRIBUTE_VOCABULARY)
+                pools = (
+                    self._buffer_words_matching(prefix), ATTRIBUTE_VOCABULARY,
+                )
         else:
             if len(prefix) < MIN_SUGGESTION_PREFIX:
                 return []
-            pools = self._suggestion_pools(prefix_start, line)
+            pools = self._suggestion_pools(prefix_start, line, prefix)
         for pool in pools:
             matches = sorted(
                 (

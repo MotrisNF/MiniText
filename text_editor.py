@@ -74,12 +74,23 @@ class TextEditor(
         # scrolled to, which stays put as more output arrives below it.
         self.run_view_start = None
         self._run_rows = 0
+        # Differential rendering: only the rows whose own text actually
+        # changed since the last frame get re-sent to the terminal -
+        # everything that isn't part of any row's own content (a
+        # resize, or the suggestion dropdown floating over rows that
+        # otherwise wouldn't redraw) forces one full redraw instead,
+        # to never leave stale content behind. See rendering.py.
+        self._force_full_redraw = True
+        self._last_rendered_rows = {}
+        self._last_terminal_size = None
+        self._dropdown_was_shown = False
         self.suggestion_matches = []
         self.suggestion_index = 0
         self._suggestion_dismissed_at = None
         self._import_members_cache = {}
         self._line_word_cache = {}
         self._word_pool_static = frozenset()
+        self._word_pool_static_sorted = []
         self._word_pool_lines_ref = None
         self._word_pool_line_count = -1
         self._word_pool_line_index = -1
@@ -102,6 +113,7 @@ class TextEditor(
                     self._render()
                     key = read_key()
                     if key == "RESIZE":
+                        self._force_full_redraw = True
                         continue
                     if key == "EOF":
                         break
@@ -118,6 +130,11 @@ class TextEditor(
                     if self.help_mode:
                         if key == "q":
                             self.help_mode = False
+                            # _render_help() painted the whole screen
+                            # itself, bypassing the row cache below -
+                            # it's now stale relative to what's
+                            # actually on screen.
+                            self._force_full_redraw = True
                         continue
                     if self.run_focused:
                         if key == "\x03":
