@@ -2,15 +2,21 @@
 written to the terminal: the tab bar, bracket/quote match detection,
 the help screen, and the main render() loop itself."""
 
+import functools
 import os
 import sys
 
 import theme
 from autocomplete import MAX_SUGGESTION_DROPDOWN_ITEMS
 from editing import BRACKET_PAIRS, CLOSING_TO_OPENING, QUOTE_CHARACTERS
-from highlighting import _highlight
+from highlighting import _highlight, _highlight_c
+from languages import language_for
 from terminal import _get_terminal_size
 from worktree import MIN_EDITOR_WIDTH, WORKTREE_SEPARATOR_WIDTH, WORKTREE_WIDTH
+
+
+def _no_highlight(text, lookahead=""):
+    return text
 
 
 class RenderMixin:
@@ -237,9 +243,15 @@ class RenderMixin:
         self._refresh_suggestion_matches()
         suggestion = self._ghost_suggestion()
         bracket_match = self._matching_bracket_position()
-        apply_highlight = _highlight if self._is_python_file() else (
-            lambda text, lookahead="": text
-        )
+        language = language_for(self.file_name)
+        if language == "python":
+            apply_highlight = _highlight
+        elif language == "c":
+            apply_highlight = functools.partial(_highlight_c, cpp=False)
+        elif language == "cpp":
+            apply_highlight = functools.partial(_highlight_c, cpp=True)
+        else:
+            apply_highlight = _no_highlight
         show_number = theme.SHOW_NUMBER_LINE
         show_indicator = theme.SHOW_LINE_INDICATOR
         gutter_width = (3 if show_indicator else 0) + (

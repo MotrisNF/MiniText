@@ -5,6 +5,17 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Added syntax highlighting and autocompletion for C (`.c`/`.h`) and
+  C++ (`.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx`): keywords, built-in
+  type names, preprocessor directives, and string/char literals
+  colored; word-based buffer completion plus C/C++'s own keyword
+  vocabulary as a fallback - much shallower than the Python side, no
+  type inference or macro awareness, just words and keywords.
+  `#include "..."` completes local headers next to the file being
+  edited; `#include <...>` completes real system header names, found
+  by asking the actual `gcc`/`clang`/`cc` on `PATH` for its include
+  search directories.
+
 - Performance: fixed two remaining sources of Insert-mode lag on
   large files. Autocompletion's buffer-word matching now uses binary
   search over a cached sorted list instead of scanning (and

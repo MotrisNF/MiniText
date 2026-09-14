@@ -10,10 +10,15 @@ import builtins
 import keyword
 import os
 import re
+import shutil
 import subprocess
 import sys
 
 import theme
+from languages import (
+    C_KEYWORDS, C_TYPE_NAMES, CPP_KEYWORDS, CPP_LITERALS, CPP_TYPE_NAMES,
+    language_for,
+)
 
 MIN_SUGGESTION_PREFIX = 2
 PYTHON_VOCABULARY = sorted(
@@ -142,6 +147,101 @@ def _is_inside_string_or_comment(line, column):
             quote = character
         index += 1
     return quote is not None
+
+
+def _is_inside_c_string_or_comment(line, column):
+    """Like `_is_inside_string_or_comment`, for C/C++'s comment
+    styles instead of Python's `#`: `//` runs to the end of the line;
+    a same-line `/* ... */` is skipped over entirely (scanning
+    resumes right after it); one that doesn't close by `column` on
+    this line counts as "inside" - same single-line-only limitation
+    as a block comment actually spanning multiple lines, which this
+    can't see across."""
+    quote = None
+    index = 0
+    while index < column and index < len(line):
+        character = line[index]
+        if quote:
+            if character == "\\":
+                index += 2
+                continue
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character == "/" and line[index:index + 2] == "//":
+            return True
+        if character == "/" and line[index:index + 2] == "/*":
+            end = line.find("*/", index + 2)
+            if end == -1 or end + 2 > column:
+                return True
+            index = end + 2
+            continue
+        if character in ("'", '"'):
+            quote = character
+        index += 1
+    return quote is not None
+
+
+_INCLUDE_PATTERN = re.compile(r'^\s*#\s*include\s+([<"])')
+
+
+def _compiler_include_dirs(cpp):
+    """The real system include search path of whatever C/C++
+    compiler is actually installed, found by asking it directly (the
+    same `-Wp,-v` trick `gcc`/`clang` themselves document) instead of
+    guessing a fixed path - the same "introspect the real thing"
+    philosophy as Python's module completion, one layer down (the
+    compiler instead of the interpreter)."""
+    compiler = (
+        shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    )
+    if not compiler:
+        return []
+    try:
+        result = subprocess.run(
+            [compiler, "-E", "-Wp,-v", "-x", "c++" if cpp else "c", "-"],
+            input="", capture_output=True, text=True, timeout=3,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    directories = []
+    capturing = False
+    for line in result.stderr.split("\n"):
+        if "search starts here" in line:
+            capturing = True
+        elif line.startswith("End of search list"):
+            break
+        elif capturing:
+            directories.append(line.strip())
+    return [d for d in directories if os.path.isdir(d)]
+
+
+_system_header_cache = {}
+
+
+def _system_header_names(cpp):
+    """Every header name offered by `#include <...>` - walking each
+    of the compiler's own include directories and collecting file
+    names relative to it (so `sys/types.h` and similar
+    subdirectory-qualified names come out right), including
+    extensionless files since C++'s own standard headers
+    (`<vector>`, `<string>`, ...) have no extension at all. The
+    compiler's own include paths never change mid-session, so this
+    only actually walks them once."""
+    if cpp not in _system_header_cache:
+        names = set()
+        for directory in _compiler_include_dirs(cpp):
+            for root, _dirs, files in os.walk(directory):
+                for file_name in files:
+                    if "." in file_name and not file_name.endswith(
+                        (".h", ".hpp", ".hh", ".hxx")
+                    ):
+                        continue
+                    full_path = os.path.join(root, file_name)
+                    names.add(os.path.relpath(full_path, directory))
+        _system_header_cache[cpp] = names
+    return _system_header_cache[cpp]
 
 
 def _parse_imported_names(context_before):
@@ -375,6 +475,25 @@ class SuggestionMixin:
                 names.add(name)
         return names
 
+    def _local_header_names(self):
+        """Header files next to the one being edited, for
+        `#include "..."` - the C/C++ equivalent of
+        `_local_module_names`'s local `.py` files."""
+        directory = (
+            os.path.dirname(self.file_name) if self.file_name else ""
+        ) or os.getcwd()
+        names = set()
+        try:
+            entries = os.scandir(directory)
+        except OSError:
+            return names
+        for entry in entries:
+            if entry.is_file() and entry.name.endswith(
+                (".h", ".hpp", ".hh", ".hxx")
+            ):
+                names.add(entry.name)
+        return names
+
     def _module_member_names(self, module_name):
         directory = (
             os.path.dirname(self.file_name) if self.file_name else ""
@@ -501,8 +620,16 @@ class SuggestionMixin:
         return (self._buffer_words_matching(prefix), PYTHON_VOCABULARY)
 
     def _compute_suggestion_matches(self):
-        if self.mode != "insert" or not self._is_python_file():
+        if self.mode != "insert":
             return []
+        language = language_for(self.file_name)
+        if language == "python":
+            return self._compute_python_suggestion_matches()
+        if language in ("c", "cpp"):
+            return self._compute_c_suggestion_matches(language)
+        return []
+
+    def _compute_python_suggestion_matches(self):
         line = self.lines[self.line]
         if _is_inside_string_or_comment(line, self.column):
             return []
@@ -543,6 +670,58 @@ class SuggestionMixin:
                 return []
             pools = self._suggestion_pools(prefix_start, line, prefix)
         for pool in pools:
+            matches = sorted(
+                (
+                    word for word in pool
+                    if word != prefix and word.startswith(prefix)
+                ),
+                key=len,
+            )
+            if matches:
+                return matches
+        return []
+
+    def _compute_c_suggestion_matches(self, language):
+        """C/C++'s much simpler counterpart to
+        _compute_python_suggestion_matches: word/keyword completion,
+        plus `#include <...>`/`#include "..."` offering real header
+        names instead - no type inference, no `self.`/`->` awareness,
+        no macro expansion."""
+        line = self.lines[self.line]
+        if self.column < len(line) and _is_word_char(line[self.column]):
+            return []
+        # Checked before the generic inside-a-string test below: the
+        # quote (or angle bracket) that opens #include "..."/<...>
+        # is, structurally, an unterminated string - exactly what
+        # that test exists to detect - so it has to be recognized as
+        # an include first, or it would never get past that check.
+        include_match = _INCLUDE_PATTERN.match(line[:self.column])
+        if include_match:
+            opening = include_match.group(1)
+            closing = ">" if opening == "<" else '"'
+            already_typed = line[include_match.end():self.column]
+            if closing in already_typed:
+                return []
+            headers = (
+                _system_header_names(language == "cpp") if opening == "<"
+                else self._local_header_names()
+            )
+            return sorted(
+                (name for name in headers if name.startswith(already_typed)),
+                key=len,
+            )
+        if _is_inside_c_string_or_comment(line, self.column):
+            return []
+        prefix = self._current_word_prefix()
+        if len(prefix) < MIN_SUGGESTION_PREFIX:
+            return []
+        vocabulary = CPP_KEYWORDS if language == "cpp" else C_KEYWORDS
+        type_names = CPP_TYPE_NAMES if language == "cpp" else C_TYPE_NAMES
+        literals = CPP_LITERALS if language == "cpp" else set()
+        for pool in (
+            self._buffer_words_matching(prefix),
+            vocabulary | type_names | literals,
+        ):
             matches = sorted(
                 (
                     word for word in pool

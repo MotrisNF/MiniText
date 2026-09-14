@@ -59,6 +59,23 @@ usable as a general-purpose text editor for anything else.
   local file's real API is often just that. Suggestions never trigger
   inside a string or a comment, so typing free-form text there doesn't
   get treated as Python code.
+- Syntax highlighting and autocompletion for `.c`/`.h` and
+  `.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files too, in the same style
+  as `.py` - keywords, built-in type names, preprocessor directives,
+  and string/char literals colored, plus word-based completion from
+  the buffer and C's (or C++'s, with its own extra keywords like
+  `class`/`namespace`/`template`) own vocabulary as a fallback. This
+  is deliberately much shallower than the Python side: no type
+  inference, no `self`/`->` awareness, no macro expansion - just
+  words and keywords. `#include "..."` offers `.h`/`.hpp` files next
+  to the one being edited, the same way Python offers local `.py`
+  files after `import`; `#include <...>` instead offers real system
+  header names, found by asking whichever of `gcc`/`clang`/`cc` is on
+  `PATH` for its own include search directories (the same
+  "introspect the real thing" approach as Python's module
+  completion, one layer down) - needing none of them just means this
+  one specific case offers nothing, same as `:lint` without
+  `flake8`/`mypy` installed.
 - Matching-bracket and matching-quote highlighting, for `()`, `[]`,
   `{}`, `'` and `"`, in either direction and across lines.
 - Auto-closing of brackets and quotes - only when the spot to the
@@ -430,8 +447,9 @@ never prevents the editor from starting.
 | `tabs.py`          | Multi-tab buffer lifecycle: switching tabs, reading files from disk |
 | `worktree.py`      | The worktree file explorer panel: listing, expanding/collapsing, creating/deleting entries |
 | `run_panel.py`     | `:run`/`:lint`/`:cmd`'s shared pty-backed output panel |
-| `autocomplete.py`  | Word/keyword/module/type-aware suggestions for `.py` files |
-| `highlighting.py`  | Python syntax highlighting for one line at a time            |
+| `autocomplete.py`  | Word/keyword/module/type-aware suggestions for `.py`, and word/keyword/`#include` suggestions for C/C++ |
+| `highlighting.py`  | Python and C/C++ syntax highlighting for one line at a time  |
+| `languages.py`     | File-extension-to-language detection and the C/C++ keyword/type vocabularies |
 | `venv_detect.py`   | Virtualenv detection for `:run`/`:lint`/`:cmd`                |
 | `terminal.py`      | Raw terminal mode, key reading, and the resize/output wakeup plumbing |
 | `theme.py`         | Loads and validates `~/.minirc`, and resolves the active theme into ANSI color codes |
@@ -445,8 +463,13 @@ never prevents the editor from starting.
 
 Mini is intentionally small. Some notable limitations:
 
-- Syntax highlighting and autocompletion only apply to files with a
-  `.py` extension.
+- Syntax highlighting and autocompletion only apply to `.py`,
+  `.c`/`.h`, and `.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files - a
+  `.h` file is always treated as C, never C++, since there's no
+  reliable way to tell them apart by name alone.
+- The C/C++ side is word/keyword completion only - none of the
+  Python side's type inference, `self`/`->` awareness, or macro
+  expansion.
 - Completing names after `from module import `, or completing
   `name.` when `name` was assigned an imported class, actually
   imports that module (in an isolated subprocess, not Mini's own
@@ -465,9 +488,10 @@ Mini is intentionally small. Some notable limitations:
   written with the module name inline (only a `Class` imported
   directly via `from module import Class`).
 - Syntax highlighting colors each line independently, without
-  awareness of multi-line strings (a triple-quoted string spanning
-  several lines won't be colored as one block). Bracket/quote
-  matching itself does search across lines.
+  awareness of multi-line constructs: a triple-quoted Python string,
+  or a C/C++ `/* ... */` comment, spanning several lines won't be
+  colored (or, for the comment, excluded from highlighting) as one
+  block. Bracket/quote matching itself does search across lines.
 - Undo/redo is granular: each keystroke that changes the text is its
   own undo step.
 - Search is a plain, case-insensitive substring match; there is no
