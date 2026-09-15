@@ -54,13 +54,18 @@ def _inline_tab_positions(line):
 
 class RenderMixin:
 
-    def _tab_label(self, index):
+    def _tab_file_name(self, index):
         if index == self.active_tab:
-            file_name, modified = self.file_name, self.modified
-        else:
-            state = self.tabs[index]
-            file_name, modified = state["file_name"], state["modified"]
-        name = os.path.basename(file_name) if file_name else "no name"
+            return self.file_name
+        return self.tabs[index]["file_name"]
+
+    def _tab_label(self, index):
+        file_name = self._tab_file_name(index)
+        modified = (
+            self.modified if index == self.active_tab
+            else self.tabs[index]["modified"]
+        )
+        name = os.path.basename(file_name) if file_name else "MiniText"
         marker = "● " if modified else ""
         return marker, name
 
@@ -71,10 +76,15 @@ class RenderMixin:
         at all in mouse mode (see terminal.py's own docstring on why
         mouse support is opt-in): without a mouse there's no way to
         click it, and `:q` already closes tabs just fine, so it would
-        only ever be visual noise for a keyboard-only user."""
+        only ever be visual noise for a keyboard-only user. It's also
+        never there on the one unnamed "MiniText" tab (no real file
+        behind it - closing it, `:q`'s own job, just resets it back to
+        blank rather than removing a tab at all, see tabs.py's own
+        `_close_current_tab`), so there's nothing for it to click
+        closed in the first place."""
         marker, name = self._tab_label(index)
         text = f" {marker}{name} "
-        if not theme.MOUSE_ENABLED:
+        if not theme.MOUSE_ENABLED or self._tab_file_name(index) is None:
             return text, None
         close_offset = len(text)
         # A trailing space of its own margin after the × too, so it
@@ -905,7 +915,12 @@ class RenderMixin:
             value = self._name_dialog["value"]
             visible_len = min(len(value), inner_width)
             cursor_row = 2 + name_dialog_box["top_row_offset"] + 2
-            cursor_column = name_dialog_box["left"] + 2 + visible_len
+            # `input_row` is built as "│ " + value + ... - two cells
+            # (the border, then its own leading space) before the
+            # first character of the typed value, so the cursor - one
+            # past the last typed character, not on top of it - sits
+            # 3 (not 2) columns past the box's own left edge.
+            cursor_column = name_dialog_box["left"] + 3 + visible_len
         elif self.worktree_focused:
             cursor_row = 2 + 1 + self.worktree_cursor - self.worktree_scroll
             cursor_column = 1
@@ -1063,7 +1078,10 @@ class RenderMixin:
     def _render_close_mini_box(self, box):
         left, width, label = box["left"], box["width"], box["label"]
         top_row = 2 + box["top_row_offset"]
-        color = theme.SUGGESTION_COLOR
+        color = (
+            theme.CURRENT_LINE_INDICATOR_COLOR if self._close_mini_hovered
+            else theme.SUGGESTION_COLOR
+        )
         top_border = "┌" + "─" * (width - 2) + "┐"
         label_row = "│" + label.center(width - 2) + "│"
         bottom_border = "└" + "─" * (width - 2) + "┘"
@@ -1216,6 +1234,7 @@ class RenderMixin:
             if kind == "MOUSE_MOVE":
                 self._hovered_worktree_button = None
                 self._hovered_tab_close = None
+                self._close_mini_hovered = False
             return
         region = target[0]
         if kind == "MOUSE_MOVE":
@@ -1225,6 +1244,7 @@ class RenderMixin:
             self._hovered_tab_close = (
                 target[1] if region == "tab_bar" and target[2] else None
             )
+            self._close_mini_hovered = region == "close_mini_button"
             return
         if region == "sidebar_button":
             if kind == "MOUSE_PRESS":

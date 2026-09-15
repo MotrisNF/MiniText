@@ -110,6 +110,7 @@ class TextEditor(
         self._last_click = None
         self._hovered_worktree_button = None
         self._hovered_tab_close = None
+        self._close_mini_hovered = False
         self._name_dialog = None
 
     def run(self):

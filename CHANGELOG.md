@@ -3,6 +3,29 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.9.2 - 2026-09-15
+
+- Fixed the tab-bar × and name-dialog × (see 1.9.0) not actually
+  turning red on hover for everyone - they used `LINE_LENGTH_ERROR_COLOR`,
+  which is themeable via `~/.minirc` and isn't guaranteed to be red at
+  all. Both now use a fixed ANSI red instead, independent of theme.
+- Fixed the "Close Mini" button and the new-file/new-folder name
+  dialog leaving stale border/text on screen after being dismissed (by
+  confirming, cancelling, or clicking their own ×) whenever the
+  buffer's own text underneath happened not to change - they're
+  overlays outside the normal per-row redraw tracking, so closing one
+  now forces a full redraw, the same way the suggestion dropdown
+  already does.
+- The name dialog's × is now bold, so it doesn't get lost against the
+  box's own border.
+- The one unnamed tab with no file behind it now reads "MiniText"
+  instead of "no name", and never gets a × - even with unsaved scratch
+  text typed into it - since there's no real file there to close.
+- The "Close Mini" button now highlights on hover too, the same cue
+  the worktree panel's own buttons already use.
+- Fixed the name dialog's cursor sitting one column short, on top of
+  the last typed character, instead of right after it.
+
 ## 1.9.0 - 2026-09-15
 
 - `mini --update`'s messages now show the installed version instead
