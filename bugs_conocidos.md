@@ -14,3 +14,4 @@
 -El menu de --help no permite desplazarse. Si la terminal es pequeña, no
     permite ver el mensaje completo
 -El boton de cerrar mini no cambia de color al introducir el mouse
+-El aspa de el buffer vacio no debe de mostrarse

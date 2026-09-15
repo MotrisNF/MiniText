@@ -90,6 +90,7 @@ class TextEditor(
         self._last_rendered_rows = {}
         self._last_terminal_size = None
         self._dropdown_was_shown = False
+        self._overlay_box_was_shown = False
         self.suggestion_matches = []
         self.suggestion_index = 0
         self._suggestion_dismissed_at = None

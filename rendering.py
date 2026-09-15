@@ -26,6 +26,15 @@ def _no_highlight(text, lookahead=""):
 # single click does.
 DOUBLE_CLICK_SECONDS = 0.4
 
+# A guaranteed-red foreground for a hovered "×" (tab close, name-
+# dialog cancel) - deliberately not one of theme.py's own palette
+# colors, since those are user-customizable (LINE_LENGTH_ERROR_COLOR,
+# the closest existing one, is themeable per ~/.minirc and isn't
+# necessarily red at all) and "red" here is the whole point, not a
+# theme choice. Standard SGR red, not a 256-color index, so it's not
+# subject to a terminal's own 256-color palette remapping either.
+_CLOSE_HOVER_COLOR = "\x1b[91m"
+
 
 def _inline_tab_positions(line):
     """(leading_end, tab_indices): `leading_end` is where `line`'s own
@@ -88,7 +97,7 @@ class RenderMixin:
                 close_char = text[close_offset]
                 after = text[close_offset + 1:]
                 styled = (
-                    f"{base}{before}{theme.LINE_LENGTH_ERROR_COLOR}"
+                    f"{base}{before}{_CLOSE_HOVER_COLOR}"
                     f"{close_char}{base}{after}"
                 )
             else:
@@ -683,12 +692,24 @@ class RenderMixin:
             and len(self.suggestion_matches[:MAX_SUGGESTION_DROPDOWN_ITEMS])
             >= 2
         )
+        # The "Close Mini"/name-dialog boxes are the same kind of
+        # overlay the suggestion dropdown already is above - not part
+        # of any row's own content, so a row whose real text hasn't
+        # changed (the common case: typing a name doesn't touch
+        # self.lines) would otherwise never get redrawn once the box
+        # covering it goes away, leaving its border/text stuck on
+        # screen forever.
+        overlay_box_shown = (
+            close_box is not None or name_dialog_box is not None
+        )
         full_redraw = (
             self._force_full_redraw
             or (terminal_width, terminal_height) != self._last_terminal_size
             or dropdown_will_show or self._dropdown_was_shown
+            or overlay_box_shown or self._overlay_box_was_shown
         )
         self._dropdown_was_shown = dropdown_will_show
+        self._overlay_box_was_shown = overlay_box_shown
         self._last_terminal_size = (terminal_width, terminal_height)
         self._force_full_redraw = False
 
@@ -1086,12 +1107,17 @@ class RenderMixin:
             top_border = "┌" + "─" * (width - 2) + "┐"
         else:
             close_color = (
-                theme.LINE_LENGTH_ERROR_COLOR
-                if dialog.get("close_hovered") else color
+                _CLOSE_HOVER_COLOR if dialog.get("close_hovered") else color
             )
+            # Bold, so the single "×" character doesn't get lost in a
+            # border made of the same box-drawing weight - explicitly
+            # un-bolded (\x1b[22m) right after, since theme.py's own
+            # escape codes never issue a true SGR reset (\x1b[0m),
+            # only reassign fg/bg colors, so a left-open bold would
+            # otherwise bleed into every render after this one.
             top_border = (
                 "┌" + "─" * (width - 3)
-                + f"{close_color}×{color}" + "┐"
+                + f"\x1b[1m{close_color}×\x1b[22m{color}" + "┐"
             )
         label_row = "│" + box["label"].center(width - 2) + "│"
         inner_width = width - 4
