@@ -246,10 +246,18 @@ mini .               # open the worktree file explorer for a directory
 mini path/to/dir     # same, for a specific directory
 mini --version       # print the installed version
 mini --update        # check for updates and install them if found
+mini --config        # open ~/.minirc as a tab
+mini --uninstall     # remove Mini and its configuration
+mini --help          # show usage and a brief description (press q to exit)
 ```
 
 The editor starts in Visual mode. Type `:help` at any time to see the
-full command reference from inside the editor.
+full command reference from inside the editor; `mini --help` shows the
+command-line usage above instead, without opening the editor itself -
+also dismissed with `q`. Any other `--something` is rejected outright
+("not a valid command") instead of being treated as a file name to
+open or create, since a stray typo in a flag (`mini --hlep`) almost
+certainly wasn't meant to create a file literally called that.
 
 ### Updating
 
@@ -304,6 +312,9 @@ never know existed.
 | Arrow keys, or `h`/`j`/`k`/`l` | Move left/down/up/right             |
 | A number, then a move key | Repeat that move that many times (`5l` moves right 5 times). The number stays active for further taps of a move key too - handy if it auto-repeats a digit and a movement key together - until you type a new number or press a non-movement key |
 | `Ctrl` + arrow key        | Extend the selection while moving       |
+| `a` / `f`                 | Jump to the start / end of the current line |
+| `s` / `d`                 | Jump to the start / end of the file     |
+| `Ctrl+a` / `Ctrl+f` / `Ctrl+s` / `Ctrl+d` | Same jumps as `a`/`f`/`s`/`d`, extending the selection while moving - the same idea as `Ctrl` + arrow key, just to these four destinations instead |
 | `i`                       | Enter Insert mode                       |
 | `w`                       | Focus the worktree panel (shows it first if hidden) |
 | `/text`, Enter            | Search for `text`                       |
@@ -334,10 +345,10 @@ never know existed.
 | `:q!`         | Exit immediately, discarding unsaved changes in every tab |
 | `:wq!`, `:qw!` | Save every open tab, then exit                      |
 | `:l <n>`      | Jump to line `n`                                     |
-| `:b`          | Jump to the beginning of the file                    |
-| `:e`          | Jump to the end of the file                          |
-| `:a`          | Jump to the start of the current line                |
-| `:f`          | Jump to the end of the current line                  |
+| `:b`          | Jump to the beginning of the file (also plain `s` in Visual mode) |
+| `:e`          | Jump to the end of the file (also plain `d` in Visual mode) |
+| `:a`          | Jump to the start of the current line (also plain `a` in Visual mode) |
+| `:f`          | Jump to the end of the current line (also plain `f` in Visual mode) |
 | `:d`          | Delete the current selection                         |
 | `:d <n>`      | Delete line `n`                                      |
 | `:c`          | Copy the selection, or the current line if none is selected |

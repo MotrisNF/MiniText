@@ -1,9 +1,37 @@
 import os
+import sys
 from sys import argv
 
 import theme
 import updater
 from text_editor import edit_file
+
+_CLI_HELP_LINES = (
+    "Mini is a small terminal text editor written in pure Python,",
+    "with no external dependencies. It renders directly with ANSI",
+    "escape sequences in a raw-mode terminal, and includes syntax",
+    "highlighting, inline autocompletion, and a file explorer for",
+    "Python files, while staying usable as a general-purpose text",
+    "editor for anything else.",
+    "",
+    "Usage:",
+    "  mini                 Start with an empty, unnamed buffer",
+    "  mini <file>          Open a file (created on save if it",
+    "                       doesn't exist)",
+    "  mini <directory>     Open the worktree file explorer for a",
+    "                       directory",
+    "  mini --version       Print the installed version",
+    "  mini --update        Check for updates and install them if",
+    "                       found",
+    "  mini --config        Open ~/.minirc as a tab",
+    "  mini --uninstall     Remove Mini and its configuration",
+    "  mini --help          Show this help",
+    "",
+    "Once open, type :help inside the editor for the full in-editor",
+    "command and keybinding reference.",
+    "",
+    "Press q to exit.",
+)
 
 
 def _read_version():
@@ -15,6 +43,16 @@ def _read_version():
             return f.read().strip()
     except OSError:
         return "unknown"
+
+
+def _show_cli_help():
+    from terminal import raw_terminal, read_key
+
+    with raw_terminal():
+        sys.stdout.write("\r\n".join(_CLI_HELP_LINES) + "\r\n")
+        sys.stdout.flush()
+        while read_key() != "q":
+            pass
 
 
 if __name__ == "__main__":
@@ -34,6 +72,12 @@ if __name__ == "__main__":
 
         case 2 if argv[1] == "--uninstall":
             updater.run_uninstall_command()
+
+        case 2 if argv[1] == "--help":
+            _show_cli_help()
+
+        case 2 if argv[1].startswith("--"):
+            print(f"'{argv[1]}' is not a valid command. Use 'mini --help'.")
 
         case 2:
             updater.check_for_updates_on_open()

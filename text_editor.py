@@ -129,7 +129,10 @@ class TextEditor(
                         continue
                     if key == "\x03" and not self.run_focused:
                         continue
-                    if key == "\x04" and not self.worktree_focused:
+                    if (
+                        key == "\x04" and not self.worktree_focused
+                        and self.mode != "visual"
+                    ):
                         continue
                     if self.help_mode:
                         if key == "q":
@@ -309,6 +312,28 @@ class TextEditor(
                     elif key in ("RIGHT", "CTRL-RIGHT"):
                         self._update_selection(key)
                         self._move_horizontal(self._consume_count())
+                    elif self.mode == "visual" and key in ("a", "\x01"):
+                        self._update_selection(
+                            "CTRL-A" if key == "\x01" else key
+                        )
+                        self.column = 0
+                    elif self.mode == "visual" and key in ("f", "\x06"):
+                        self._update_selection(
+                            "CTRL-F" if key == "\x06" else key
+                        )
+                        self.column = len(self.lines[self.line])
+                    elif self.mode == "visual" and key in ("s", "\x13"):
+                        self._update_selection(
+                            "CTRL-S" if key == "\x13" else key
+                        )
+                        self.line = 0
+                        self.column = 0
+                    elif self.mode == "visual" and key in ("d", "\x04"):
+                        self._update_selection(
+                            "CTRL-D" if key == "\x04" else key
+                        )
+                        self.line = len(self.lines) - 1
+                        self.column = 0
                     elif self.mode == "insert" and key in ("\r", "\n"):
                         self._new_line()
                     elif self.mode == "insert" and key in ("\x7f", "\b"):

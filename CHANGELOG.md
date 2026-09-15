@@ -5,6 +5,29 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.6.1 - 2026-09-15
+
+- Added `a`/`f`/`s`/`d` in Visual mode, jumping to the start/end of
+  the current line and the start/end of the file respectively - the
+  same destinations `:a`/`:f`/`:b`/`:e` already jump to, just without
+  going through `:`. `Ctrl+a`/`Ctrl+f`/`Ctrl+s`/`Ctrl+d` make the same
+  four jumps while extending the selection, the same idea as `Ctrl` +
+  an arrow key already does for plain movement. `Ctrl+d` now also
+  reaches Visual mode - previously it was swallowed unconditionally
+  outside the worktree panel (where it creates a new directory);
+  Insert/Command/Search and every other context are unaffected, still
+  swallowing it exactly as before.
+- Added `mini --help`: usage for every command-line form `mini`
+  accepts, plus a short description of the program, shown the same
+  way (and dismissed the same way, `q`) as the in-editor `:help`
+  screen - `:help` itself is unchanged, and still the place for the
+  full in-editor command/keybinding reference.
+- Any other `mini --something` (a typo'd or unrecognized flag) is now
+  rejected outright ("not a valid command... use 'mini --help'")
+  instead of being treated as a file name to open or, on save,
+  silently create - a stray typo in a flag was never actually meant
+  to create a file literally named that.
+
 ## 1.6.0 - 2026-09-15
 
 - Added elastic tabstops: a tab typed after a line's own indentation
