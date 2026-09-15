@@ -225,7 +225,10 @@ class TextEditor(
                             self.command = ""
                         elif key == "i":
                             self._release_worktree_focus()
-                            self.mode = "insert"
+                            if self._is_blank_buffer():
+                                self.status = "Open or create a file first"
+                            else:
+                                self.mode = "insert"
                         continue
                     if self.command is not None:
                         if key in ("\r", "\n"):
@@ -327,8 +330,11 @@ class TextEditor(
                             (self.active_tab - 1) % len(self.tabs)
                         )
                     elif self.mode == "visual" and key == "i":
-                        self.mode = "insert"
-                        self.selection_anchor = None
+                        if self._is_blank_buffer():
+                            self.status = "Open or create a file first"
+                        else:
+                            self.mode = "insert"
+                            self.selection_anchor = None
                     elif (
                         self.mode == "visual"
                         and key == "n"

@@ -565,8 +565,13 @@ class RenderMixin:
             run_max_start if self.run_view_start is None
             else min(self.run_view_start, run_max_start)
         )
-        show_number = theme.SHOW_NUMBER_LINE
-        show_indicator = theme.SHOW_LINE_INDICATOR
+        # The one blank/unnamed/unmodified "MiniText" placeholder tab
+        # (see tabs.py's own `_is_blank_buffer`) isn't a real file -
+        # no line-number gutter for it, same reasoning as it having no
+        # closing × of its own.
+        is_blank_buffer = self._is_blank_buffer()
+        show_number = theme.SHOW_NUMBER_LINE and not is_blank_buffer
+        show_indicator = theme.SHOW_LINE_INDICATOR and not is_blank_buffer
         gutter_width = (3 if show_indicator else 0) + (
             number_width + 1 if show_number else 0
         )
@@ -638,8 +643,7 @@ class RenderMixin:
         # state, as does clicking it again.
         show_close_button = (
             theme.MOUSE_ENABLED and len(self.tabs) <= 1
-            and self.file_name is None and self.lines == [""]
-            and not self.modified and self._name_dialog is None
+            and is_blank_buffer and self._name_dialog is None
         )
         code_area_left, code_area_width = self._code_area_bounds(
             editor_col_offset, gutter_width, content_width, file_settings

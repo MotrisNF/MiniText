@@ -36,6 +36,21 @@ class TabsMixin:
             "redo_stack": deque(maxlen=UNDO_HISTORY_LIMIT), "modified": False,
         }
 
+    def _is_blank_buffer(self):
+        """Whether the active tab is the one blank/unnamed/unmodified
+        "MiniText" placeholder - never a real file, whether freshly
+        started with no file argument or reached by closing the last
+        real tab (see `_close_current_tab`). Used to keep it a plain
+        landing screen: no typing into it (see text_editor.py's own
+        `i`-key handling) and no line-number gutter (see rendering.py's
+        `render`), on top of it already being the one tab that shows
+        "MiniText" with no closing × and offers the "Close Mini"
+        button instead of a real close."""
+        return (
+            self.file_name is None and self.lines == [""]
+            and not self.modified
+        )
+
     def _sync_active_tab(self):
         self.tabs[self.active_tab] = self._current_buffer_state()
 
