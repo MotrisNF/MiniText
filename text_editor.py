@@ -217,8 +217,9 @@ class TextEditor(
                             self._invalidate_worktree_cache()
                         elif key == "DELETE":
                             self._worktree_delete(entries)
+                        ## a ver que pasa
                         elif key in ("v", ESC):
-                            self._release_worktree_focus()
+                            self._reset_focus_for_click
                         elif key == ":":
                             self._release_worktree_focus()
                             self.mode = "command"
