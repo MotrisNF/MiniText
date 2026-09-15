@@ -714,7 +714,10 @@ class RenderMixin:
         output.append(f"\x1b[{terminal_height};1H\x1b[K")
         if editor_col_offset:
             output.append(f"\x1b[{terminal_height};{editor_col_offset + 1}H")
-        output.append(f"Mode: {self.mode.title()}")
+        mode_text = f"Mode: {self.mode.title()}"
+        if self.move_mode:
+            mode_text += " (Move: j/k or Up/Down, m/Esc to stop)"
+        output.append(mode_text)
         position_text = f"Line: {self.line + 1} Col: {self.column + 1}"
         position_column = max(1, terminal_width - len(position_text) + 1)
         output.append(

@@ -315,6 +315,7 @@ never know existed.
 | `a` / `f`                 | Jump to the start / end of the current line |
 | `s` / `d`                 | Jump to the start / end of the file     |
 | `Ctrl+a` / `Ctrl+f` / `Ctrl+s` / `Ctrl+d` | Same jumps as `a`/`f`/`s`/`d`, extending the selection while moving - the same idea as `Ctrl` + arrow key, just to these four destinations instead |
+| `m`                        | Toggle Move mode (see below)            |
 | `i`                       | Enter Insert mode                       |
 | `w`                       | Focus the worktree panel (shows it first if hidden) |
 | `/text`, Enter            | Search for `text`                       |
@@ -322,6 +323,23 @@ never know existed.
 | `Ctrl+Z`                  | Undo                                    |
 | `Ctrl+Y`                  | Redo                                    |
 | `Tab` / `Shift+Tab`       | Switch to the next / previous tab       |
+
+### Move mode
+
+`m` toggles Move mode - there's no way for a terminal program to
+detect a key being *held down* alongside another one, so this is the
+practical equivalent: press `m` once, then `j`/`k` or `Up`/`Down`
+(as many times as you like, without pressing `m` again) trade the
+current line's place with the line directly above/below it. With an
+active selection, the same keys move every line the selection spans
+as one block, trading places with whichever single line sits
+immediately above/below the whole block - the selection follows the
+move, still highlighting the same content. A no-op at either edge of
+the file. Every other key while in Move mode (except `m` or `Esc`,
+either of which exits back to plain Visual mode) is ignored rather
+than falling through to its usual meaning; each move is a normal,
+undoable edit (`Ctrl+Z` steps back through them one at a time). The
+mode bar shows `(Move: ...)` while it's active as a reminder.
 
 ### Insert mode
 

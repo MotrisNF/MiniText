@@ -43,6 +43,7 @@ class TextEditor(
         self.status = ""
         self.running = True
         self.help_mode = False
+        self.move_mode = False
         self.viewport_top = 0
         self.selection_anchor = None
         self.clipboard = None
@@ -222,6 +223,14 @@ class TextEditor(
                         elif len(key) == 1 and key.isprintable():
                             self.search_query += key
                         continue
+                    if self.move_mode:
+                        if key in ("j", "DOWN"):
+                            self._move_current_line_or_selection(1)
+                        elif key in ("k", "UP"):
+                            self._move_current_line_or_selection(-1)
+                        elif key in ("m", ESC):
+                            self.move_mode = False
+                        continue
 
                     if self.mode == "visual" and key in HJKL_TO_ARROW:
                         key = HJKL_TO_ARROW[key]
@@ -265,6 +274,8 @@ class TextEditor(
                     elif self.mode == "visual" and key == "/":
                         self.mode = "search"
                         self.search_query = ""
+                    elif self.mode == "visual" and key == "m":
+                        self.move_mode = True
                     elif self.mode == "visual" and key == "w":
                         if not self.worktree_visible:
                             self.worktree_visible = True

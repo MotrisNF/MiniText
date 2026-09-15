@@ -131,6 +131,38 @@ class BufferEditMixin:
         self.selection_anchor = None
         return True
 
+    def _move_current_line_or_selection(self, direction):
+        """Moves the current line - or, with an active selection,
+        every line it spans (start to end, the same range
+        `_delete_selection`/`_selected_text` already use) - one
+        position up (`direction=-1`) or down (`direction=1`), trading
+        places with whichever single line sits immediately in that
+        direction. A no-op at either edge of the file - there's
+        nothing to trade places with past it. The cursor (and the
+        selection, if there is one) always shifts by exactly one line
+        along with whatever moved, since a swap with one neighbor is
+        the only kind of move this ever makes."""
+        bounds = self._selection_bounds()
+        if bounds is not None:
+            start_line, _, end_line, _ = bounds
+        else:
+            start_line = end_line = self.line
+        if direction < 0 and start_line == 0:
+            return
+        if direction > 0 and end_line == len(self.lines) - 1:
+            return
+        self._snapshot()
+        if direction < 0:
+            neighbor = self.lines.pop(start_line - 1)
+            self.lines.insert(end_line, neighbor)
+        else:
+            neighbor = self.lines.pop(end_line + 1)
+            self.lines.insert(start_line, neighbor)
+        self.line += direction
+        if bounds is not None:
+            anchor_line, anchor_column = self.selection_anchor
+            self.selection_anchor = (anchor_line + direction, anchor_column)
+
     def _paste(self, text):
         self._snapshot()
         pasted_lines = text.split("\n")

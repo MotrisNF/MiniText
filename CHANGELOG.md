@@ -5,6 +5,23 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.6.2 - 2026-09-15
+
+- Added Move mode in Visual mode (`m` to toggle): while active, `j`/
+  `k`/`Up`/`Down` trade the current line's place with its neighbor
+  above/below, repeatably, without pressing `m` again for each move -
+  the closest practical equivalent to "hold a key and move lines
+  around" a terminal program can actually detect, since there's no
+  way to see a key being held down independently of others over a
+  plain terminal connection the way a GUI can. With an active
+  selection, the same keys move every line it spans as one block,
+  trading places with whichever single line sits immediately above/
+  below the whole block - the selection follows the move. A no-op at
+  either edge of the file; every other key while active (`m`/`Esc`
+  aside, either of which exits) is ignored rather than falling
+  through to its usual meaning. Each move is its own undoable edit.
+  The mode bar shows `(Move: ...)` as a reminder while it's on.
+
 ## 1.6.1 - 2026-09-15
 
 - Added `a`/`f`/`s`/`d` in Visual mode, jumping to the start/end of
