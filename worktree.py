@@ -7,6 +7,7 @@ editor, and the other focus targets)."""
 import os
 import shutil
 
+import terminal
 import theme
 
 WORKTREE_WIDTH = 28
@@ -109,9 +110,7 @@ class WorktreePanelMixin:
 
     def _worktree_create(self, is_directory):
         label = "New directory name" if is_directory else "New file name"
-        self.status = f"{label}:"
-        self._render()
-        name = self._read_command_line(label)
+        name = self._prompt_name_dialog(label)
         if not name:
             self.status = "Cancelled"
             return
@@ -126,6 +125,76 @@ class WorktreePanelMixin:
             return
         self._invalidate_worktree_cache()
         self.status = f"Created {new_path}"
+
+    def _prompt_name_dialog(self, label):
+        """Blocking modal prompt for a name, used by `_worktree_create`
+        for both `Ctrl+F`/`Ctrl+D` and the matching worktree buttons.
+        Unlike `_read_command_line`'s own status-line prompt (still
+        used for "Name of the file:" on `:w`/`:wq` with no file open),
+        this one is drawn as its own box centered in the code area
+        (see rendering.py's `render`/`_render_name_dialog_box`/
+        `_name_dialog_box_geometry`) - `self._name_dialog` is what
+        tells `render` to draw it at all, and carries the live typed
+        value plus whether the mouse is hovering its own "×" (top-
+        right corner of the box, mouse mode only) between renders,
+        the same way `self.command`/`self.search_query` already carry
+        their own state through every render while active. Returns
+        the typed name, or "" if cancelled (`Esc`, or a click on the
+        "×")."""
+        self._name_dialog = {
+            "label": label, "value": "", "close_hovered": False,
+        }
+        try:
+            while True:
+                self._render()
+                key = terminal.read_key()
+                if key == "MOUSE_IGNORE":
+                    continue
+                if key.startswith("MOUSE_"):
+                    if self._handle_name_dialog_mouse_event(key):
+                        return ""
+                    continue
+                if key in ("\r", "\n"):
+                    return self._name_dialog["value"].strip()
+                if key == terminal.ESC:
+                    return ""
+                if key in ("\x7f", "\b"):
+                    self._name_dialog["value"] = (
+                        self._name_dialog["value"][:-1]
+                    )
+                elif len(key) == 1 and key.isprintable():
+                    self._name_dialog["value"] += key
+        finally:
+            self._name_dialog = None
+
+    def _handle_name_dialog_mouse_event(self, key):
+        """Whether the click/move `key` (a MOUSE_* event - see
+        terminal.py's own docstring on the ones it can produce) lands
+        on `_prompt_name_dialog`'s own "×"; True only for a press
+        that does, telling the dialog's loop to cancel. Hovering it
+        (mouse mode's own cue for "this is clickable") is tracked the
+        same way `_hovered_worktree_button` already is for the
+        worktree panel's buttons, just kept on `self._name_dialog`
+        itself since that's what `render` already threads through to
+        `_render_name_dialog_box` for the "×"'s own hover styling."""
+        kind, _, rest = key.partition(":")
+        column_text, _, row_text = rest.partition(":")
+        try:
+            column, row = int(column_text), int(row_text)
+        except ValueError:
+            return False
+        layout = self._mouse_layout
+        box = layout.get("name_dialog_box") if layout else None
+        if box is None or box["close_col"] is None:
+            return False
+        on_close = (
+            row - 2 == box["row_offset_start"]
+            and column - 1 == box["close_col"]
+        )
+        if kind == "MOUSE_MOVE":
+            self._name_dialog["close_hovered"] = on_close
+            return False
+        return kind == "MOUSE_PRESS" and on_close
 
     def _worktree_delete(self, entries):
         if not entries:

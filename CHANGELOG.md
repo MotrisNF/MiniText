@@ -20,7 +20,9 @@ matches `VERSION` (what `mini --version` prints).
 - Replaced the worktree panel's "Close current tab" button with a "×"
   on each tab in the tab bar itself, `MOUSE_ENABLED`-only (a keyboard-
   only session has no mouse to click it with, and `:q` already closes
-  the current tab). Clicking it closes that tab - even one that isn't
+  the current tab), with its own margin on either side so it doesn't
+  sit flush against the tab's own border, and turning red as the mouse
+  passes over it. Clicking it closes that tab - even one that isn't
   the active one - prompting to save first if it's modified, exactly
   like `:q` already does.
 - Closing the last open tab (`:q`, the new tab-bar ×, or the new
@@ -29,10 +31,19 @@ matches `VERSION` (what `mini --version` prints).
   file argument starts in. Only closing a tab already in that exact
   state actually exits, so `:q` (or × / "Close Mini") a second time
   still quits normally.
-- Added a centered "Close Mini" button, shown only with `MOUSE_ENABLED`
-  on and only once down to that one blank/unnamed/unmodified tab - the
-  only way left to quit with just a mouse, now that closing the last
-  tab no longer does that on its own.
+- Added a "Close Mini" button, shown only with `MOUSE_ENABLED` on and
+  only once down to that one blank/unnamed/unmodified tab - the only
+  way left to quit with just a mouse, now that closing the last tab no
+  longer does that on its own. It's centered within the code area
+  itself (after the gutter, and no wider than the file's own `MAX_COLS`
+  when that's on) rather than across the whole terminal, the same span
+  the new name dialog below is centered within too.
+- `Ctrl+F`/`Ctrl+D` and the worktree panel's `+ New file`/
+  `+ New folder` buttons now prompt for the new name in a box of their
+  own, centered in the code area, instead of on the status line at the
+  bottom - with `MOUSE_ENABLED` on, it has a "×" in its own top-right
+  corner (turning red on hover, same as a tab's own ×) to cancel by
+  clicking; `Esc` still cancels it too either way.
 
 ## 1.8.3 - 2026-09-15
 

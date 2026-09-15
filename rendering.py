@@ -67,19 +67,33 @@ class RenderMixin:
         text = f" {marker}{name} "
         if not theme.MOUSE_ENABLED:
             return text, None
-        return text + "×", len(text)
+        close_offset = len(text)
+        # A trailing space of its own margin after the × too, so it
+        # doesn't sit flush against the "│" separator to its right -
+        # the same reason there's already one before it, on the other
+        # side of the tab's own name.
+        return text + "× ", close_offset
 
     def _tab_bar_line(self):
         segments = []
         for index in range(len(self.tabs)):
-            text, _ = self._tab_segment_text(index)
+            text, close_offset = self._tab_segment_text(index)
             background = (
                 theme.ACTIVE_TAB_COLOR if index == self.active_tab
                 else theme.INACTIVE_TAB_COLOR
             )
-            segments.append(
-                f"{background}{theme.TEXT_COLOR}{text}{theme.BASE_STYLE}"
-            )
+            base = f"{background}{theme.TEXT_COLOR}"
+            if close_offset is not None and index == self._hovered_tab_close:
+                before = text[:close_offset]
+                close_char = text[close_offset]
+                after = text[close_offset + 1:]
+                styled = (
+                    f"{base}{before}{theme.LINE_LENGTH_ERROR_COLOR}"
+                    f"{close_char}{base}{after}"
+                )
+            else:
+                styled = f"{base}{text}"
+            segments.append(f"{styled}{theme.BASE_STYLE}")
         separator = f"{theme.LINE_NUMBER_COLOR}│{theme.BASE_STYLE}"
         return separator.join(segments)
 
@@ -606,12 +620,21 @@ class RenderMixin:
         show_close_button = (
             theme.MOUSE_ENABLED and len(self.tabs) <= 1
             and self.file_name is None and self.lines == [""]
-            and not self.modified
+            and not self.modified and self._name_dialog is None
+        )
+        code_area_left, code_area_width = self._code_area_bounds(
+            editor_col_offset, gutter_width, content_width, file_settings
         )
         close_box = (
             self._close_mini_box_geometry(
-                editor_col_offset, terminal_width, editor_rows
+                code_area_left, code_area_width, editor_rows
             ) if show_close_button else None
+        )
+        name_dialog_box = (
+            self._name_dialog_box_geometry(
+                code_area_left, code_area_width, editor_rows,
+                self._name_dialog["label"],
+            ) if self._name_dialog is not None else None
         )
         # Snapshot of exactly this frame's geometry, so a mouse event
         # arriving before the *next* render (the only time one ever
@@ -631,6 +654,7 @@ class RenderMixin:
             "row_descriptors": row_descriptors,
             "visible_rows": visible_rows,
             "close_mini_box": close_box,
+            "name_dialog_box": name_dialog_box,
         }
         sidebar_lines = (
             self._worktree_body_lines(visible_rows) if sidebar_visible
@@ -820,6 +844,10 @@ class RenderMixin:
         output.extend(ruler_overlay)
         if close_box is not None:
             output.extend(self._render_close_mini_box(close_box))
+        if name_dialog_box is not None:
+            output.extend(self._render_name_dialog_box(
+                name_dialog_box, self._name_dialog
+            ))
         output.append(f"\x1b[{input_row};1H\x1b[K")
         if editor_col_offset:
             output.append(f"\x1b[{input_row};{editor_col_offset + 1}H")
@@ -851,7 +879,13 @@ class RenderMixin:
         )
 
         output.append("\x1b[?25l")
-        if self.worktree_focused:
+        if name_dialog_box is not None:
+            inner_width = name_dialog_box["width"] - 4
+            value = self._name_dialog["value"]
+            visible_len = min(len(value), inner_width)
+            cursor_row = 2 + name_dialog_box["top_row_offset"] + 2
+            cursor_column = name_dialog_box["left"] + 2 + visible_len
+        elif self.worktree_focused:
             cursor_row = 2 + 1 + self.worktree_cursor - self.worktree_scroll
             cursor_column = 1
         elif self.run_focused:
@@ -951,32 +985,59 @@ class RenderMixin:
         return seg_end
 
     @staticmethod
-    def _close_mini_box_geometry(
-        editor_col_offset, terminal_width, editor_rows
+    def _code_area_bounds(
+        editor_col_offset, gutter_width, content_width, file_settings
     ):
-        """Where the centered "Close Mini" box (see `render`'s own
-        `show_close_button`) lands this frame, as both the on-screen
-        rectangle `_render_close_mini_box` draws and the hit-testing
-        rectangle `_mouse_target` checks a click against - the two
-        must always agree, so there's exactly one place computing
-        either. None when the box can't fit at all (a terminal or
-        editor pane too narrow/short for it), rather than drawing
-        something clipped or unclickable."""
-        label = "Close Mini"
-        inner_width = len(label) + 2
-        box_width = inner_width + 2
-        area_width = max(0, terminal_width - editor_col_offset)
-        if box_width > area_width or editor_rows < 3:
+        """The horizontal span a centered overlay box (the "Close
+        Mini" button, the New file/folder name dialog, ...) should be
+        centered within - starting right after the gutter (line
+        numbers/current-line marker), and no wider than the user's
+        own chosen line-length limit (`file_settings["MAX_COLS"]`,
+        see `theme.settings_for`) when that's turned on, so a box
+        lines up with where a line of code itself is expected to end
+        instead of stretching across whatever's left of a wide
+        terminal (which, with the worktree panel open too, isn't even
+        centered on the terminal itself)."""
+        area_left = editor_col_offset + gutter_width
+        area_width = content_width
+        if file_settings["MAX_COLS_ENABLED"]:
+            area_width = min(area_width, file_settings["MAX_COLS"])
+        return area_left, max(1, area_width)
+
+    @staticmethod
+    def _centered_box_geometry(
+        area_left, area_width, editor_rows, box_width, box_height
+    ):
+        """The on-screen rectangle a `box_width`x`box_height` overlay
+        box, centered within `_code_area_bounds`'s own span, lands at
+        this frame - shared by every centered overlay box (`render`'s
+        own `_close_mini_box_geometry` and the new-file/new-folder
+        name dialog) so there's exactly one place computing the
+        geometry `_mouse_target`'s hit-testing must always agree with
+        what actually got drawn. None when the box can't fit at all
+        (a terminal or editor pane too narrow/short for it), rather
+        than drawing something clipped or unclickable."""
+        if box_width > area_width or editor_rows < box_height:
             return None
-        left = editor_col_offset + (area_width - box_width) // 2
-        top_row_offset = max(0, (editor_rows - 3) // 2)
+        left = area_left + (area_width - box_width) // 2
+        top_row_offset = max(0, (editor_rows - box_height) // 2)
         return {
             "left": left, "top_row_offset": top_row_offset,
-            "width": box_width, "label": label,
+            "width": box_width, "height": box_height,
             "row_offset_start": top_row_offset,
-            "row_offset_end": top_row_offset + 2,
+            "row_offset_end": top_row_offset + box_height - 1,
             "col_start": left, "col_end": left + box_width - 1,
         }
+
+    def _close_mini_box_geometry(self, area_left, area_width, editor_rows):
+        label = "Close Mini"
+        box_width = len(label) + 4
+        box = self._centered_box_geometry(
+            area_left, area_width, editor_rows, box_width, 3
+        )
+        if box is not None:
+            box["label"] = label
+        return box
 
     def _render_close_mini_box(self, box):
         left, width, label = box["left"], box["width"], box["label"]
@@ -991,6 +1052,63 @@ class RenderMixin:
             f"\x1b[{top_row + 1};{left + 1}H{color}{label_row}"
             f"{theme.BASE_STYLE}",
             f"\x1b[{top_row + 2};{left + 1}H{color}{bottom_border}"
+            f"{theme.BASE_STYLE}",
+        ]
+
+    def _name_dialog_box_geometry(
+        self, area_left, area_width, editor_rows, label
+    ):
+        """Where the "new file/folder name" dialog (see worktree.py's
+        `_prompt_name_dialog`) lands this frame - same centered-box
+        machinery as `_close_mini_box_geometry`, just one row taller
+        for its own input line below the label. `close_col` is the
+        0-indexed display column of the "×" drawn into the top
+        border's own top-right corner (see `_render_name_dialog_box`)
+        - None with the mouse off, since there's nothing to click it
+        with and `Esc` already cancels the dialog just fine."""
+        box_width = max(len(label) + 4, 26)
+        box = self._centered_box_geometry(
+            area_left, area_width, editor_rows, box_width, 4
+        )
+        if box is None:
+            return None
+        box["label"] = label
+        box["close_col"] = (
+            box["col_end"] - 1 if theme.MOUSE_ENABLED else None
+        )
+        return box
+
+    def _render_name_dialog_box(self, box, dialog):
+        left, width = box["left"], box["width"]
+        top_row = 2 + box["top_row_offset"]
+        color = theme.SUGGESTION_COLOR
+        if box["close_col"] is None:
+            top_border = "┌" + "─" * (width - 2) + "┐"
+        else:
+            close_color = (
+                theme.LINE_LENGTH_ERROR_COLOR
+                if dialog.get("close_hovered") else color
+            )
+            top_border = (
+                "┌" + "─" * (width - 3)
+                + f"{close_color}×{color}" + "┐"
+            )
+        label_row = "│" + box["label"].center(width - 2) + "│"
+        inner_width = width - 4
+        value = dialog["value"]
+        visible_value = (
+            value[-inner_width:] if len(value) > inner_width else value
+        )
+        input_row = "│ " + visible_value.ljust(inner_width) + " │"
+        bottom_border = "└" + "─" * (width - 2) + "┘"
+        return [
+            f"\x1b[{top_row};{left + 1}H{color}{top_border}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 1};{left + 1}H{color}{label_row}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 2};{left + 1}H{color}{input_row}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 3};{left + 1}H{color}{bottom_border}"
             f"{theme.BASE_STYLE}",
         ]
 
@@ -1071,11 +1189,15 @@ class RenderMixin:
         if target is None:
             if kind == "MOUSE_MOVE":
                 self._hovered_worktree_button = None
+                self._hovered_tab_close = None
             return
         region = target[0]
         if kind == "MOUSE_MOVE":
             self._hovered_worktree_button = (
                 target[1] if region == "sidebar_button" else None
+            )
+            self._hovered_tab_close = (
+                target[1] if region == "tab_bar" and target[2] else None
             )
             return
         if region == "sidebar_button":

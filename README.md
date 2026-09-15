@@ -478,8 +478,8 @@ being in the editor.
 | `l`            | Expand a directory                                             |
 | `h`            | Collapse a directory                                           |
 | Enter          | Open a file as a tab (switching to it if already open), or expand/collapse a directory |
-| Ctrl+F         | Create a new file (prompts for a name)                         |
-| Ctrl+D         | Create a new directory (prompts for a name)                    |
+| Ctrl+F         | Create a new file (prompts for a name in a centered box)       |
+| Ctrl+D         | Create a new directory (prompts for a name in a centered box)  |
 | Ctrl+H         | Toggle showing hidden files/directories (names starting with `.`) |
 | Delete         | Delete the selected file or directory, after confirming        |
 | `v`, `Esc`     | Return focus to the editor                                     |
@@ -492,6 +492,13 @@ mouse passes over either one. They take up their own rows (shrinking
 the file list by that many lines) only when actually shown, so nothing
 changes about the panel's layout with the mouse off. Closing a tab is
 done from the tab bar itself instead (see "Tabs").
+
+Either way, the name itself is typed into a box centered in the code
+area (after the gutter, and no wider than the file's own `MAX_COLS`
+when that's on - see "Configuration") rather than on the status line
+at the bottom. With the mouse on, it has its own "×" in the top-right
+corner of its border (turning red on hover) to cancel by clicking;
+`Esc` cancels it either way, mouse on or off.
 
 ### Mouse
 
@@ -509,9 +516,9 @@ Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
   with `Tab`/`Shift+Tab` - same "take me there now" reasoning, so it
   also switches to Visual mode and releases the worktree/`:run` panel
   first if either had focus. Clicking the "×" next to a tab's name
-  closes that tab instead - even one that isn't the active one -
-  prompting to save first if it's modified, exactly like `:q` does
-  (see "Tabs").
+  (which turns red as the mouse passes over it) closes that tab
+  instead - even one that isn't the active one - prompting to save
+  first if it's modified, exactly like `:q` does (see "Tabs").
 - Clicking in the worktree panel focuses it (the same as pressing
   `w`) and selects whichever entry was clicked; clicking that *same*
   entry again (while the panel was already focused) activates it -
@@ -524,9 +531,13 @@ Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
 - Scrolling over the `:run`/`:lint`/`:cmd` output panel scrolls it,
   the same as `Up`/`Down` already do there.
 - With the editor down to its last tab, once that tab is blank,
-  unnamed, and unmodified (see "Tabs"), a centered "Close Mini" button
-  appears in the code area - the only way left to quit with just a
+  unnamed, and unmodified (see "Tabs"), a "Close Mini" button appears,
+  centered in the code area - the only way left to quit with just a
   mouse, since closing the last tab no longer exits Mini on its own.
+- Creating a new file or folder (`Ctrl+F`/`Ctrl+D`, or the worktree
+  panel's own buttons) prompts for its name in a box centered in the
+  code area instead of on the status line, with its own "×" to cancel
+  by clicking (see "Worktree panel").
 
 One real tradeoff to know about: enabling this makes the terminal
 hand click-and-drag over to Mini instead of doing its own native text

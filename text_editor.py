@@ -109,6 +109,7 @@ class TextEditor(
         self._last_click = None
         self._hovered_worktree_button = None
         self._hovered_tab_close = None
+        self._name_dialog = None
 
     def run(self):
         read_fd, write_fd = _enable_resize_wakeup()
