@@ -5,6 +5,38 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.7.0 - 2026-09-15
+
+- Added mouse support, off by default (`MOUSE_ENABLED=True` in
+  `~/.minirc` to turn it on): clicking in the code area places the
+  cursor there and switches to Visual mode (from Insert, Command,
+  Search, or with the worktree/`:run` panel focused - a click always
+  means "take me there now"); click-and-drag selects, the same as
+  `Ctrl` + an arrow key; the scroll wheel moves the cursor a few lines
+  at a time. Clicking the worktree panel focuses it and selects the
+  entry under the cursor; clicking that same entry again (while
+  already focused there) activates it - opens the file, or expands/
+  collapses the directory - the "first click selects, second click
+  opens" a mouse-driven file explorer is expected to have; its own
+  scroll wheel moves the selection instead. Scrolling over the
+  `:run`/`:lint`/`:cmd` panel scrolls it, same as `Up`/`Down` already
+  do there. Off by default because enabling it hands click-and-drag
+  over to Mini, so the terminal's own native text selection (and its
+  copy shortcut) stops working with it while Mini has focus - most
+  terminals let you hold `Shift` while dragging to get it back on
+  demand, a terminal feature Mini doesn't control either way.
+- The mode bar now shows "Mode: Worktree" while the worktree panel is
+  focused, instead of whatever Visual/Insert/Command mode it's
+  layered on top of underneath - clearer now that a click can move
+  focus there without a deliberate `w` first.
+- Removed the placeholder line number Mini used to draw one row past
+  the end of the file (meant as a visual "this is where the file
+  ends" cue) - real usage found it more distracting than orienting.
+  Only the file's own real lines are drawn now. `PLACEHOLDER_COLOR`
+  (the setting that colored it) is gone from `~/.minirc` accordingly;
+  a leftover one in an existing file is simply never read anymore,
+  not an error.
+
 ## 1.6.3 - 2026-09-15
 
 - `mini --help` now reads like a short man page instead of a flat

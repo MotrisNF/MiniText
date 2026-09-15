@@ -498,10 +498,8 @@ class RenderMixin:
         # covering the whole thing.
         row_descriptors = []
         wrap_line_index = self.viewport_top
-        ran_out_of_lines = False
         while len(row_descriptors) < editor_rows:
             if wrap_line_index >= len(self.lines):
-                ran_out_of_lines = True
                 break
             points = self._wrap_points(wrap_line_index, content_width)
             segment_count = len(points) - 1
@@ -514,6 +512,23 @@ class RenderMixin:
                 if len(row_descriptors) >= editor_rows:
                     break
             wrap_line_index += 1
+        # Snapshot of exactly this frame's geometry, so a mouse event
+        # arriving before the *next* render (the only time one ever
+        # can, since read_key() only runs between one render() call
+        # and the next) can be resolved against what's actually on
+        # screen right now, without redoing all of the layout math
+        # above a second time just to answer "what's at row X, column
+        # Y".
+        self._mouse_layout = {
+            "terminal_height": terminal_height,
+            "input_row": input_row,
+            "sidebar_visible": sidebar_visible,
+            "editor_col_offset": editor_col_offset,
+            "gutter_width": gutter_width,
+            "run_visible": run_visible,
+            "editor_rows": editor_rows,
+            "row_descriptors": row_descriptors,
+        }
         sidebar_lines = (
             self._worktree_body_lines(visible_rows) if sidebar_visible
             else []
@@ -674,16 +689,6 @@ class RenderMixin:
                                 f"\x1b[{2 + row_offset};{ruler_column}H"
                                 f"{theme.RULER_COLOR}│{theme.BASE_STYLE}"
                             )
-            elif (
-                row_offset == len(row_descriptors)
-                and ran_out_of_lines and show_number
-            ):
-                placeholder_prefix = "   " if show_indicator else ""
-                editor_row = (
-                    f"{theme.PLACEHOLDER_COLOR}{placeholder_prefix}"
-                    f"{len(self.lines) + 1:>{number_width}} "
-                    f"{theme.PLACEHOLDER_RESET}"
-                )
             else:
                 editor_row = ""
 
@@ -714,9 +719,17 @@ class RenderMixin:
         output.append(f"\x1b[{terminal_height};1H\x1b[K")
         if editor_col_offset:
             output.append(f"\x1b[{terminal_height};{editor_col_offset + 1}H")
-        mode_text = f"Mode: {self.mode.title()}"
-        if self.move_mode:
-            mode_text += " (Move: j/k or Up/Down, m/Esc to stop)"
+        if self.worktree_focused:
+            # worktree_focused sits alongside self.mode (still
+            # "visual" underneath) rather than being a mode of its
+            # own - shown here as one anyway, so a click or `w` that
+            # jumps focus there is never mistaken for still being in
+            # the editor.
+            mode_text = "Mode: Worktree"
+        else:
+            mode_text = f"Mode: {self.mode.title()}"
+            if self.move_mode:
+                mode_text += " (Move: j/k or Up/Down, m/Esc to stop)"
         output.append(mode_text)
         position_text = f"Line: {self.line + 1} Col: {self.column + 1}"
         position_column = max(1, terminal_width - len(position_text) + 1)
@@ -805,3 +818,121 @@ class RenderMixin:
                 self.viewport_top, content_width
             )
             self.viewport_top += 1
+
+    def _raw_column_for_display_column(
+        self, line_index, seg_start, seg_end, target_display_column
+    ):
+        """The raw character index within `[seg_start, seg_end)` of
+        `self.lines[line_index]` whose *display* column (accounting
+        for elastic tabs, same as everywhere else this matters)
+        reaches `target_display_column` - or `seg_end` if the click
+        landed past the end of the visible text, so clicking in the
+        empty space to the right of a short line still places the
+        cursor at the end of it, like every other editor does."""
+        display_column = 0
+        for raw_index in range(seg_start, seg_end):
+            char_width = self._character_display_width(line_index, raw_index)
+            if display_column + char_width > target_display_column:
+                return raw_index
+            display_column += char_width
+        return seg_end
+
+    def _mouse_target(self, column, row):
+        """What's at 1-indexed screen (column, row) as of the last
+        render - one of ("tab_bar", None), ("mode_bar", None),
+        ("status", None), ("sidebar", row_within_panel),
+        ("run_output", row_within_output), or
+        ("editor", line_index, raw_column); None if it doesn't land on
+        anything the last frame actually drew (past the end of the
+        file, say). Resolved against `self._mouse_layout`, a snapshot
+        of the geometry `_render()` last computed, rather than
+        recomputing any of it here."""
+        layout = self._mouse_layout
+        if layout is None:
+            return None
+        if row == 1:
+            return ("tab_bar", None)
+        if row == layout["terminal_height"]:
+            return ("mode_bar", None)
+        if row == layout["input_row"]:
+            return ("status", None)
+        row_offset = row - 2
+        if row_offset < 0:
+            return None
+        column0 = column - 1
+        if layout["sidebar_visible"] and column0 < layout["editor_col_offset"]:
+            return ("sidebar", row_offset)
+        if layout["run_visible"] and row_offset == layout["editor_rows"]:
+            return ("run_divider", None)
+        if layout["run_visible"] and row_offset > layout["editor_rows"]:
+            return ("run_output", row_offset - layout["editor_rows"] - 1)
+        row_descriptors = layout["row_descriptors"]
+        if row_offset >= len(row_descriptors):
+            return None
+        line_index, seg_start, seg_end, _, _ = row_descriptors[row_offset]
+        text_column0 = max(
+            0,
+            column0 - layout["editor_col_offset"] - layout["gutter_width"],
+        )
+        raw_column = self._raw_column_for_display_column(
+            line_index, seg_start, seg_end, text_column0
+        )
+        return ("editor", line_index, raw_column)
+
+    def _handle_mouse_event(self, key):
+        """Dispatches one MOUSE_* event (see terminal.py's
+        _read_mouse_event) to whichever region of the last-rendered
+        frame it landed on. A click in the code area always wins over
+        whatever was focused before it - the worktree panel, the
+        :run/:lint/:cmd output panel, Insert/Command/Search mode - on
+        the theory that pointing at a spot in the code and clicking
+        always means "take me there now", the same reasoning `Esc`
+        already follows, just spelled with a mouse instead of a key."""
+        kind, _, rest = key.partition(":")
+        column_text, _, row_text = rest.partition(":")
+        try:
+            column, row = int(column_text), int(row_text)
+        except ValueError:
+            return
+        target = self._mouse_target(column, row)
+        if target is None:
+            return
+        region = target[0]
+        if region == "sidebar":
+            if kind == "MOUSE_PRESS":
+                self._handle_worktree_click(target[1])
+            elif kind == "MOUSE_WHEEL_UP":
+                self.worktree_cursor = max(0, self.worktree_cursor - 3)
+            elif kind == "MOUSE_WHEEL_DOWN":
+                entries = self._worktree_entries()
+                if entries:
+                    self.worktree_cursor = min(
+                        len(entries) - 1, self.worktree_cursor + 3
+                    )
+            return
+        if region == "editor":
+            line_index, raw_column = target[1], target[2]
+            column_clamped = min(raw_column, len(self.lines[line_index]))
+            if kind == "MOUSE_PRESS":
+                if self.run_focused:
+                    self._stop_run()
+                self._release_worktree_focus()
+                self.command = None
+                self.search_query = None
+                self.mode = "visual"
+                self.line = line_index
+                self.column = column_clamped
+                self.selection_anchor = (self.line, self.column)
+            elif kind == "MOUSE_DRAG":
+                self.line = line_index
+                self.column = column_clamped
+            elif kind == "MOUSE_WHEEL_UP":
+                self._move_vertical(-3)
+            elif kind == "MOUSE_WHEEL_DOWN":
+                self._move_vertical(3)
+            return
+        if region == "run_output":
+            if kind == "MOUSE_WHEEL_UP":
+                self._scroll_run_output("UP")
+            elif kind == "MOUSE_WHEEL_DOWN":
+                self._scroll_run_output("DOWN")

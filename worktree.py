@@ -143,6 +143,39 @@ class WorktreePanelMixin:
             self.status = f"Deleted {path}"
         self.worktree_cursor = max(0, self.worktree_cursor - 1)
 
+    def _handle_worktree_click(self, panel_row):
+        """A mouse click at `panel_row` (0-indexed from the top of the
+        sidebar - row 0 is the "Worktree: root" header, matching
+        `_worktree_body_lines`'s own layout) always focuses the panel
+        first, the same as pressing `w` (including picking up changes
+        made outside Mini, but only on the transition into focus, not
+        on every click while already there - same as `w` itself).
+        Clicking an entry moves the selection to it; clicking the
+        entry *already* selected - only meaningful if the panel was
+        already focused, i.e. this isn't the click that just focused
+        it - activates it instead (open the file, or expand/collapse
+        the directory), the "first click selects, second click opens"
+        behavior a mouse-driven file explorer is expected to have."""
+        newly_focused = not self.worktree_focused
+        if not self.worktree_visible:
+            self.worktree_visible = True
+            self.worktree_visible_because_of_focus = True
+        self.worktree_focused = True
+        if newly_focused:
+            self._invalidate_worktree_cache()
+        entries = self._worktree_entries()
+        if panel_row <= 0 or not entries:
+            return
+        entry_index = self.worktree_scroll + (panel_row - 1)
+        if entry_index >= len(entries):
+            return
+        already_selected = (
+            not newly_focused and entry_index == self.worktree_cursor
+        )
+        self.worktree_cursor = entry_index
+        if already_selected:
+            self._worktree_activate(entries)
+
     @staticmethod
     def _pad_sidebar(text):
         return text[:WORKTREE_WIDTH].ljust(WORKTREE_WIDTH)

@@ -80,7 +80,6 @@ _COLOR_KINDS = {
     "TYPE_COLOR": "fg",
     "FUNCTION_COLOR": "fg",
     "SUGGESTION_COLOR": "fg",
-    "PLACEHOLDER_COLOR": "fg",
     "INACTIVE_TAB_COLOR": "bg",
     "RULER_COLOR": "fg",
     "LINE_LENGTH_ERROR_COLOR": "fg",
@@ -94,7 +93,7 @@ DEFAULT_THEMES = {
         "BACKGROUND_COLOR": 235, "TEXT_COLOR": 252, "LINE_NUMBER_COLOR": 244,
         "CURRENT_LINE_INDICATOR_COLOR": 214, "BRACKET_MATCH_COLOR": 238,
         "KEYWORD_COLOR": 33, "DUNDER_COLOR": 11, "TYPE_COLOR": 2,
-        "FUNCTION_COLOR": 5, "SUGGESTION_COLOR": 244, "PLACEHOLDER_COLOR": 244,
+        "FUNCTION_COLOR": 5, "SUGGESTION_COLOR": 244,
         "INACTIVE_TAB_COLOR": 232, "RULER_COLOR": 238,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
         "DECLARATION_COLOR": 203, "COMMENT_COLOR": 108,
@@ -103,7 +102,7 @@ DEFAULT_THEMES = {
         "BACKGROUND_COLOR": 233, "TEXT_COLOR": 250, "LINE_NUMBER_COLOR": 240,
         "CURRENT_LINE_INDICATOR_COLOR": 208, "BRACKET_MATCH_COLOR": 236,
         "KEYWORD_COLOR": 39, "DUNDER_COLOR": 221, "TYPE_COLOR": 78,
-        "FUNCTION_COLOR": 176, "SUGGESTION_COLOR": 240, "PLACEHOLDER_COLOR": 240,
+        "FUNCTION_COLOR": 176, "SUGGESTION_COLOR": 240,
         "INACTIVE_TAB_COLOR": 236, "RULER_COLOR": 236,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
         "DECLARATION_COLOR": 203, "COMMENT_COLOR": 102,
@@ -112,7 +111,7 @@ DEFAULT_THEMES = {
         "BACKGROUND_COLOR": 253, "TEXT_COLOR": 235, "LINE_NUMBER_COLOR": 246,
         "CURRENT_LINE_INDICATOR_COLOR": 166, "BRACKET_MATCH_COLOR": 250,
         "KEYWORD_COLOR": 18, "DUNDER_COLOR": 94, "TYPE_COLOR": 22,
-        "FUNCTION_COLOR": 90, "SUGGESTION_COLOR": 246, "PLACEHOLDER_COLOR": 246,
+        "FUNCTION_COLOR": 90, "SUGGESTION_COLOR": 246,
         "INACTIVE_TAB_COLOR": 250, "RULER_COLOR": 249,
         "LINE_LENGTH_ERROR_COLOR": 160, "STRING_COLOR": 25,
         "DECLARATION_COLOR": 160, "COMMENT_COLOR": 101,
@@ -127,6 +126,7 @@ DEFAULT_SETTINGS = {
     "THEME": "base", "SHOW_NUMBER_LINE": True, "SHOW_LINE_INDICATOR": True,
     "MAX_COLS_ENABLED": True, "MAX_COLS": DEFAULT_MAX_COLS,
     "INDENT_WITH_TABS": DEFAULT_INDENT_WITH_TABS, "TAB_SIZE": DEFAULT_TAB_SIZE,
+    "MOUSE_ENABLED": False,
 }
 # Keys a [filetype:.ext] section may override - same names and same
 # parsing as their top-level counterparts in DEFAULT_SETTINGS, just
@@ -188,7 +188,7 @@ def _resolve_settings(primary, backup):
     settings = dict(DEFAULT_SETTINGS)
     for key in (
         "SHOW_NUMBER_LINE", "SHOW_LINE_INDICATOR", "MAX_COLS_ENABLED",
-        "INDENT_WITH_TABS",
+        "INDENT_WITH_TABS", "MOUSE_ENABLED",
     ):
         for source in (primary, backup):
             if key in source:
@@ -291,6 +291,13 @@ def _default_rc_text():
         "# tab character (True) or TAB_SIZE spaces (False).",
         f"INDENT_WITH_TABS={DEFAULT_SETTINGS['INDENT_WITH_TABS']}",
         f"TAB_SIZE={DEFAULT_SETTINGS['TAB_SIZE']}",
+        "# MOUSE_ENABLED turns on click-to-place-cursor, click-and-drag",
+        "# to select, the scroll wheel, and clicking in the worktree",
+        "# panel - off by default because enabling it stops the",
+        "# terminal's own click-drag text selection from working while",
+        "# Mini has focus (most terminals let you hold Shift while",
+        "# dragging to get that back on demand).",
+        f"MOUSE_ENABLED={DEFAULT_SETTINGS['MOUSE_ENABLED']}",
         "",
         "# Each color below is an xterm 256-color palette number (0-255).",
         "# https://www.ditig.com/256-colors-cheat-sheet is a handy chart.",
@@ -331,6 +338,7 @@ def _refresh_backup_if_valid(settings, primary_settings, primary_themes):
         and "MAX_COLS" in primary_settings
         and "INDENT_WITH_TABS" in primary_settings
         and "TAB_SIZE" in primary_settings
+        and "MOUSE_ENABLED" in primary_settings
         and _is_theme_fully_valid(settings["THEME"], primary_themes)
     )
     if not fully_valid:
@@ -473,6 +481,7 @@ MAX_COLS_ENABLED = _settings["MAX_COLS_ENABLED"]
 MAX_COLS = _settings["MAX_COLS"]
 INDENT_WITH_TABS = _settings["INDENT_WITH_TABS"]
 TAB_SIZE = _settings["TAB_SIZE"]
+MOUSE_ENABLED = _settings["MOUSE_ENABLED"]
 
 BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", _colors["BACKGROUND_COLOR"])
 TEXT_COLOR = _ansi("TEXT_COLOR", _colors["TEXT_COLOR"])
@@ -499,9 +508,6 @@ SUGGESTION_RESET = BASE_STYLE
 
 SELECTION_START = "\x1b[7m"
 SELECTION_END = "\x1b[27m"
-
-PLACEHOLDER_COLOR = _ansi("PLACEHOLDER_COLOR", _colors["PLACEHOLDER_COLOR"])
-PLACEHOLDER_RESET = BASE_STYLE
 
 INACTIVE_TAB_COLOR = _ansi(
     "INACTIVE_TAB_COLOR", _colors["INACTIVE_TAB_COLOR"]

@@ -50,6 +50,17 @@ def _disable_resize_wakeup(read_fd, write_fd):
     os.close(write_fd)
 
 
+# Button-event tracking (1002 - press/release plus motion while a
+# button is held, not idle movement) with SGR extended coordinates
+# (1006 - decimal, not limited to 223 columns/rows like the older
+# encoding). Only ever sent when MOUSE_ENABLED is on: it makes the
+# terminal stop doing its own click-drag text selection while Mini has
+# focus, since drags are now handed to Mini instead - a real tradeoff,
+# not a free enhancement, which is why it defaults to off.
+_MOUSE_ENABLE = "\x1b[?1002h\x1b[?1006h"
+_MOUSE_DISABLE = "\x1b[?1006l\x1b[?1002l"
+
+
 @contextmanager
 def raw_terminal():
     file_descriptor = sys.stdin.fileno()
@@ -57,9 +68,13 @@ def raw_terminal():
     try:
         tty.setraw(file_descriptor)
         sys.stdout.write(f"\x1b[?1049h{theme.BASE_STYLE}\x1b[2J\x1b[H")
+        if theme.MOUSE_ENABLED:
+            sys.stdout.write(_MOUSE_ENABLE)
         sys.stdout.flush()
         yield
     finally:
+        if theme.MOUSE_ENABLED:
+            sys.stdout.write(_MOUSE_DISABLE)
         termios.tcsetattr(
             file_descriptor, termios.TCSADRAIN, previous_settings
         )
@@ -133,6 +148,17 @@ def read_key():
             _pushback_byte(next_byte)
         return ESC
 
+    try:
+        ready, _, _ = select.select([stdin_fd], [], [], 0.05)
+    except InterruptedError:
+        return "RESIZE"
+    if ready:
+        peek_byte = _read_stdin_byte(stdin_fd)
+        if peek_byte == b"<":
+            return _read_mouse_event(stdin_fd)
+        if peek_byte:
+            _pushback_byte(peek_byte)
+
     final, params = _read_csi_final(stdin_fd)
     if final is None:
         return ESC
@@ -158,13 +184,18 @@ def read_key():
 def _read_csi_final(stdin_fd):
     params = ""
     while True:
-        try:
-            ready, _, _ = select.select([stdin_fd], [], [], 0.05)
-        except InterruptedError:
-            return None, params
-        if not ready:
-            return None, params
-        raw_byte = os.read(stdin_fd, 1)
+        # A byte _read_mouse_event's caller already read and pushed
+        # back (checking for the mouse prefix "<") sits in
+        # _pending_byte, not in the fd's own buffer - select() alone,
+        # like read_key()'s own top-level wait, would never see it.
+        if _pending_byte is None:
+            try:
+                ready, _, _ = select.select([stdin_fd], [], [], 0.05)
+            except InterruptedError:
+                return None, params
+            if not ready:
+                return None, params
+        raw_byte = _read_stdin_byte(stdin_fd)
         if not raw_byte:
             return None, params
         char = raw_byte.decode("utf-8", errors="ignore")
@@ -172,6 +203,40 @@ def _read_csi_final(stdin_fd):
             params += char
         else:
             return char, params
+
+
+def _read_mouse_event(stdin_fd):
+    """An SGR mouse report (`\\x1b[<{code};{column};{row}M` for press
+    or motion-while-held, `...m` for release) as one of
+    "MOUSE_PRESS:col:row", "MOUSE_DRAG:col:row" (motion with the
+    button still down), "MOUSE_RELEASE:col:row",
+    "MOUSE_WHEEL_UP:col:row", "MOUSE_WHEEL_DOWN:col:row", or
+    "MOUSE_IGNORE" for anything Mini has no use for (a right/middle
+    click, an unparseable report, ...) - never ESC or any other key
+    name, so an unrecognized mouse event can't be mistaken for a real
+    keypress and trigger something unrelated. `column`/`row` are
+    1-indexed terminal coordinates, matching every cursor-positioning
+    escape sequence Mini itself already writes."""
+    final, params = _read_csi_final(stdin_fd)
+    if final not in ("M", "m"):
+        return "MOUSE_IGNORE"
+    parts = params.split(";")
+    if len(parts) != 3:
+        return "MOUSE_IGNORE"
+    try:
+        code, column, row = (int(part) for part in parts)
+    except ValueError:
+        return "MOUSE_IGNORE"
+    if code in (64, 65):
+        direction = "UP" if code == 64 else "DOWN"
+        return f"MOUSE_WHEEL_{direction}:{column}:{row}"
+    if code & 3 != 0:
+        return "MOUSE_IGNORE"
+    if final == "m":
+        return f"MOUSE_RELEASE:{column}:{row}"
+    if code & 32:
+        return f"MOUSE_DRAG:{column}:{row}"
+    return f"MOUSE_PRESS:{column}:{row}"
 
 
 def set_run_output_fd(fd):

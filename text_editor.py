@@ -92,6 +92,7 @@ class TextEditor(
         self._import_broken_cache = {}
         self._jedi_attribute_cache = {}
         self._elastic_width_cache = {}
+        self._mouse_layout = None
         self._line_word_cache = {}
         self._word_pool_static = frozenset()
         self._word_pool_static_sorted = []
@@ -127,6 +128,12 @@ class TextEditor(
                         continue
                     if key == "RUN_OUTPUT":
                         self._pump_run_output()
+                        continue
+                    if key == "MOUSE_IGNORE":
+                        continue
+                    if key.startswith("MOUSE_"):
+                        if not self.help_mode:
+                            self._handle_mouse_event(key)
                         continue
                     if key == "\x03" and not self.run_focused:
                         continue

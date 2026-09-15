@@ -459,7 +459,11 @@ default, at every depth - `Ctrl+H` toggles showing them.
 
 While the panel is visible, the status/command line and the mode bar
 at the bottom start right where the panel ends, lining up with the
-code above them instead of running under the panel.
+code above them instead of running under the panel. The mode bar
+itself reads "Mode: Worktree" while the panel is focused, instead of
+whatever Visual/Insert/Command mode it's layered on top of
+underneath, so a stray click or `w` there is never mistaken for still
+being in the editor.
 
 | Key            | Action                                                     |
 |----------------|---------------------------------------------------------------|
@@ -473,6 +477,40 @@ code above them instead of running under the panel.
 | Delete         | Delete the selected file or directory, after confirming        |
 | `v`, `Esc`     | Return focus to the editor                                     |
 | `:`, `i`       | Return focus to the editor directly in Command or Insert mode  |
+
+### Mouse
+
+Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
+(see "Configuration"). Once enabled:
+
+- Clicking in the code area places the cursor there and switches to
+  Visual mode - even from Insert, Command, or Search, and even if the
+  worktree panel or the `:run`/`:lint`/`:cmd` output panel had focus,
+  on the theory that pointing at a spot in the code and clicking
+  always means "take me there now". Click-and-drag selects text, the
+  same as `Ctrl` + an arrow key already does. The scroll wheel moves
+  the cursor up/down a few lines at a time.
+- Clicking in the worktree panel focuses it (the same as pressing
+  `w`) and selects whichever entry was clicked; clicking that *same*
+  entry again (while the panel was already focused) activates it -
+  opens the file, or expands/collapses the directory - the familiar
+  "first click selects, second click opens" a mouse-driven file
+  explorer is expected to have. The scroll wheel moves the selection
+  up/down a few entries.
+- Scrolling over the `:run`/`:lint`/`:cmd` output panel scrolls it,
+  the same as `Up`/`Down` already do there.
+
+One real tradeoff to know about: enabling this makes the terminal
+hand click-and-drag over to Mini instead of doing its own native text
+selection with it - so the terminal's usual copy shortcut no longer
+copies a drag made inside Mini this way, since that selection only
+ever exists inside Mini itself (the same way a keyboard-made selection
+already does - see `:c`, which copies to Mini's own internal
+clipboard, not the system one, either way). Most terminals let you
+hold `Shift` while dragging to bypass Mini's mouse capture and get
+their own native selection (and its copy shortcut) back on demand -
+that's a terminal feature, not something Mini controls, but it works
+in the great majority of them.
 
 ### Tabs
 
@@ -512,6 +550,7 @@ MAX_COLS_ENABLED=True
 MAX_COLS=79
 INDENT_WITH_TABS=False
 TAB_SIZE=4
+MOUSE_ENABLED=False
 
 [base]
 BACKGROUND_COLOR=235
@@ -524,7 +563,6 @@ DUNDER_COLOR=11
 TYPE_COLOR=2
 FUNCTION_COLOR=5
 SUGGESTION_COLOR=244
-PLACEHOLDER_COLOR=244
 INACTIVE_TAB_COLOR=232
 RULER_COLOR=238
 LINE_LENGTH_ERROR_COLOR=196
@@ -579,6 +617,11 @@ TAB_SIZE=2
   add a `[filetype:.ext]` section for any extension you want your own
   settings for, and delete one to go back to the default - Mini
   itself never writes one for you.
+- `MOUSE_ENABLED` (default `False`) turns on click-to-place-cursor,
+  click-and-drag selection, the scroll wheel, and clicking in the
+  worktree panel - see "Mouse" below for exactly what each does, and
+  the one real tradeoff (the terminal's own click-drag text selection
+  stops working while Mini has focus) that keeps this off by default.
 - Every color is an xterm 256-color palette number (0-255); a chart
   such as <https://www.ditig.com/256-colors-cheat-sheet> is a
   convenient reference. `RULER_COLOR` and `LINE_LENGTH_ERROR_COLOR`
@@ -655,6 +698,12 @@ inserting the separator - press `Esc` first to dismiss the dropdown,
 
 Mini is intentionally small. Some notable limitations:
 
+- The scroll wheel (see "Mouse") moves the cursor a few lines at a
+  time rather than scrolling the view independently of it - Mini has
+  no notion of a viewport detached from the cursor for the code area
+  the way the `:run`/`:lint`/`:cmd` output panel already does for
+  itself. Clicking the tab bar to switch tabs isn't supported either -
+  `Tab`/`Shift+Tab` are the only way to switch tabs today.
 - Elastic tabstops (see "Configuration") have no notion of strings or
   comments: a tab inside either of those is still treated as a column
   separator like any other, same as everything else here that colors
