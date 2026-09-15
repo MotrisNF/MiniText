@@ -1276,6 +1276,8 @@ class RenderMixin:
             if kind == "MOUSE_PRESS":
                 if self.mode != "insert":
                     self._reset_focus_for_click()
+                else:
+                    self._release_worktree_focus()
                 now = time.monotonic()
                 previous_click = self._last_click
                 self._last_click = (line_index, column_clamped, now)
