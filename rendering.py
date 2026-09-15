@@ -5,6 +5,7 @@ the help screen, and the main render() loop itself."""
 import functools
 import os
 import sys
+import time
 
 import theme
 from autocomplete import _INCLUDE_LINE_PATTERN, MAX_SUGGESTION_DROPDOWN_ITEMS
@@ -17,6 +18,13 @@ from worktree import MIN_EDITOR_WIDTH, WORKTREE_SEPARATOR_WIDTH, WORKTREE_WIDTH
 
 def _no_highlight(text, lookahead=""):
     return text
+
+
+# Two presses this close together, landing on the exact same cell, are
+# a double-click - selecting the word there (see _handle_mouse_event's
+# MOUSE_PRESS handling) instead of just moving the cursor like a
+# single click does.
+DOUBLE_CLICK_SECONDS = 0.4
 
 
 def _inline_tab_positions(line):
@@ -279,8 +287,43 @@ class RenderMixin:
 
     def _render_segment(
         self, line_index, text_segment, absolute_start, bracket_column,
-        apply_highlight,
+        apply_highlight, word_match_ranges=None,
     ):
+        if word_match_ranges:
+            segment_end = absolute_start + len(text_segment)
+            local_ranges = [
+                (max(0, s - absolute_start),
+                 min(len(text_segment), e - absolute_start))
+                for s, e in word_match_ranges
+                if s < segment_end and e > absolute_start
+            ]
+            if local_ranges:
+                pieces = []
+                cursor = 0
+                for local_start, local_end in local_ranges:
+                    if local_start > cursor:
+                        pieces.append(self._render_segment(
+                            line_index, text_segment[cursor:local_start],
+                            absolute_start + cursor, bracket_column,
+                            apply_highlight,
+                        ))
+                    pieces.append(
+                        theme.WORD_MATCH_START
+                        + self._render_segment(
+                            line_index, text_segment[local_start:local_end],
+                            absolute_start + local_start, bracket_column,
+                            apply_highlight,
+                        )
+                        + theme.WORD_MATCH_END
+                    )
+                    cursor = local_end
+                if cursor < len(text_segment):
+                    pieces.append(self._render_segment(
+                        line_index, text_segment[cursor:],
+                        absolute_start + cursor, bracket_column,
+                        apply_highlight,
+                    ))
+                return "".join(pieces)
         if (
             bracket_column is not None
             and absolute_start <= bracket_column
@@ -311,7 +354,7 @@ class RenderMixin:
     def _render_wrapped_segment(
         self, line_index, text, seg_start, seg_end, is_last_segment,
         is_current_line, selection_range, bracket_column, apply_highlight,
-        suggestion,
+        suggestion, word_match_ranges=None,
     ):
         """One wrap row's worth of colored/escaped content for
         `text[seg_start:seg_end]` - the same selection/suggestion/
@@ -330,14 +373,14 @@ class RenderMixin:
             return (
                 self._render_segment(
                     line_index, text[seg_start:self.column], seg_start,
-                    bracket_column, apply_highlight,
+                    bracket_column, apply_highlight, word_match_ranges,
                 )
                 + theme.SUGGESTION_COLOR
                 + self._display_text(suggestion)
                 + theme.SUGGESTION_RESET
                 + self._render_segment(
                     line_index, text[self.column:seg_end], self.column,
-                    bracket_column, apply_highlight,
+                    bracket_column, apply_highlight, word_match_ranges,
                 )
             )
         if selection_range is not None:
@@ -348,22 +391,23 @@ class RenderMixin:
                 return (
                     self._render_segment(
                         line_index, text[seg_start:clipped_start], seg_start,
-                        bracket_column, apply_highlight,
+                        bracket_column, apply_highlight, word_match_ranges,
                     )
                     + theme.SELECTION_START
                     + self._render_segment(
                         line_index, text[clipped_start:clipped_end],
                         clipped_start, bracket_column, apply_highlight,
+                        word_match_ranges,
                     )
                     + theme.SELECTION_END
                     + self._render_segment(
                         line_index, text[clipped_end:seg_end], clipped_end,
-                        bracket_column, apply_highlight,
+                        bracket_column, apply_highlight, word_match_ranges,
                     )
                 )
         return self._render_segment(
             line_index, text[seg_start:seg_end], seg_start, bracket_column,
-            apply_highlight,
+            apply_highlight, word_match_ranges,
         )
 
     def _render_help(self):
@@ -493,6 +537,7 @@ class RenderMixin:
         )
         self._ensure_cursor_visible(editor_rows, content_width)
         selection_bounds = self._selection_bounds()
+        current_selection_word = self._current_selection_word()
         self._refresh_suggestion_matches()
         suggestion = self._ghost_suggestion()
         bracket_match = self._matching_bracket_position()
@@ -667,10 +712,18 @@ class RenderMixin:
                     if bracket_match and bracket_match[0] == index
                     else None
                 )
+                word_match_ranges = None
+                if current_selection_word:
+                    word_match_ranges = [
+                        (start, end) for start, end in
+                        self._word_match_columns(index, current_selection_word)
+                        if selection_range != (start, end)
+                        or index != selection_bounds[0]
+                    ]
                 displayed = self._render_wrapped_segment(
                     index, text, seg_start, seg_end, is_last_segment,
                     is_current_line, selection_range, bracket_column,
-                    apply_highlight, suggestion,
+                    apply_highlight, suggestion, word_match_ranges,
                 )
                 editor_row = f"{marker}{number}{displayed}"
                 if is_first_segment:
@@ -946,15 +999,36 @@ class RenderMixin:
             column_clamped = min(raw_column, len(self.lines[line_index]))
             if kind == "MOUSE_PRESS":
                 self._reset_focus_for_click()
-                self.line = line_index
-                self.column = column_clamped
-                self.selection_anchor = (self.line, self.column)
+                now = time.monotonic()
+                previous_click = self._last_click
+                self._last_click = (line_index, column_clamped, now)
+                word_bounds = None
+                if (
+                    previous_click is not None
+                    and previous_click[0] == line_index
+                    and previous_click[1] == column_clamped
+                    and now - previous_click[2] <= DOUBLE_CLICK_SECONDS
+                ):
+                    word_bounds = self._word_bounds_at(
+                        line_index, column_clamped
+                    )
+                if word_bounds is not None:
+                    start, end = word_bounds
+                    self.line = line_index
+                    self.column = end
+                    self.selection_anchor = (line_index, start)
+                else:
+                    self.line = line_index
+                    self.column = column_clamped
+                    self.selection_anchor = (self.line, self.column)
             elif kind == "MOUSE_DRAG":
                 self.line = line_index
                 self.column = column_clamped
             elif kind == "MOUSE_WHEEL_UP":
+                self.selection_anchor = None
                 self._move_vertical(-3)
             elif kind == "MOUSE_WHEEL_DOWN":
+                self.selection_anchor = None
                 self._move_vertical(3)
             return
         if region == "tab_bar":

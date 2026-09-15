@@ -44,6 +44,7 @@ class TextEditor(
         self.column = 0
         self.mode = "visual"
         self.command = None
+        self._cmd_tab_state = None
         self.status = ""
         self.running = True
         self.help_mode = False
@@ -105,6 +106,7 @@ class TextEditor(
         self._word_pool_line_count = -1
         self._word_pool_line_index = -1
         self._worktree_entries_cache = None
+        self._last_click = None
 
     def run(self):
         read_fd, write_fd = _enable_resize_wakeup()
@@ -228,6 +230,8 @@ class TextEditor(
                         elif key == ESC:
                             self.command = None
                             self.mode = "visual"
+                        elif key == "\t":
+                            self._cmd_tab_complete()
                         elif len(key) == 1 and key.isprintable():
                             self.command += key
                         continue

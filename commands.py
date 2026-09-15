@@ -1,9 +1,12 @@
 """The `:` command line: parsing, dispatch, save/close, line-numbered
 operations (jump/copy/delete/paste by number), and search."""
 
+import os
 import re
+import sys
 
 import terminal
+import theme
 
 
 class CommandMixin:
@@ -283,5 +286,75 @@ class CommandMixin:
             self.help_mode = True
         elif name == "config" and argument is None:
             self._open_config_file()
+        elif name == "refresh" and argument is None:
+            self._refresh_config()
         else:
             self.status = f"Unknown command: :{command}"
+
+    def _refresh_config(self):
+        """`:refresh` - re-reads ~/.minirc and applies it live,
+        without restarting Mini or touching any open buffer/tab/undo
+        state: colors, MAX_COLS/INDENT_WITH_TABS/TAB_SIZE (plain and
+        per-[filetype:...]), and MOUSE_ENABLED. A forced full redraw
+        follows, since the differential-render cache holds rows drawn
+        with whatever colors were active before this - stale colors
+        would otherwise linger on any row that doesn't happen to
+        change again on its own. MOUSE_ENABLED needs its own explicit
+        escape sequence too: the terminal was only ever told to start/
+        stop reporting mouse events once, when raw_terminal() was
+        entered - reassigning theme.MOUSE_ENABLED alone wouldn't make
+        the terminal itself do anything differently."""
+        was_mouse_enabled = theme.MOUSE_ENABLED
+        theme.reload()
+        if theme.MOUSE_ENABLED != was_mouse_enabled:
+            sys.stdout.write(
+                terminal._MOUSE_ENABLE if theme.MOUSE_ENABLED
+                else terminal._MOUSE_DISABLE
+            )
+            sys.stdout.flush()
+        self._force_full_redraw = True
+        self.status = "Reloaded ~/.minirc"
+
+    def _cmd_completion_directory(self):
+        return (
+            os.path.dirname(os.path.abspath(self.file_name))
+            if self.file_name else self.worktree_root
+        )
+
+    def _cmd_tab_complete(self):
+        """Tab in a `:cmd <text>` command line: shell-style completion
+        against file/directory names in the same directory `:cmd`
+        itself would actually run in - one directory level only (a
+        token that already has a `/` in it is left alone, same as
+        typing `sub/` and pressing Tab not listing what's inside
+        `sub/`). Each Tab press after the first cycles to the next
+        match directly in the line, wrapping around - no dropdown.
+        Self-validating rather than needing to be reset from every
+        place the command line can change: a Tab continues the last
+        cycle only if the line still ends in exactly what the
+        previous Tab left there; anything else (typing, backspacing,
+        a fresh `:cmd`) is naturally treated as starting over."""
+        if not self.command.startswith("cmd "):
+            return
+        state = self._cmd_tab_state
+        if state is not None:
+            token_start, matches, index, last_inserted = state
+            if self.command[token_start:] == last_inserted:
+                index = (index + 1) % len(matches)
+                new_text = matches[index]
+                self.command = self.command[:token_start] + new_text
+                self._cmd_tab_state = (token_start, matches, index, new_text)
+                return
+        token_start = self.command.rfind(" ") + 1
+        token = self.command[token_start:]
+        if "/" in token:
+            return
+        try:
+            entries = sorted(os.listdir(self._cmd_completion_directory()))
+        except OSError:
+            return
+        matches = [name for name in entries if name.startswith(token)]
+        if not matches:
+            return
+        self.command = self.command[:token_start] + matches[0]
+        self._cmd_tab_state = (token_start, matches, 0, matches[0])

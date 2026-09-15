@@ -87,6 +87,7 @@ _COLOR_KINDS = {
     "STRING_COLOR": "fg",
     "DECLARATION_COLOR": "fg",
     "COMMENT_COLOR": "fg",
+    "WORD_MATCH_COLOR": "bg",
 }
 
 DEFAULT_THEMES = {
@@ -99,6 +100,7 @@ DEFAULT_THEMES = {
         "RULER_COLOR": 238,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
         "DECLARATION_COLOR": 203, "COMMENT_COLOR": 108,
+        "WORD_MATCH_COLOR": 24,
     },
     "dark": {
         "BACKGROUND_COLOR": 233, "TEXT_COLOR": 250, "LINE_NUMBER_COLOR": 240,
@@ -109,6 +111,7 @@ DEFAULT_THEMES = {
         "RULER_COLOR": 236,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
         "DECLARATION_COLOR": 203, "COMMENT_COLOR": 102,
+        "WORD_MATCH_COLOR": 23,
     },
     "light": {
         "BACKGROUND_COLOR": 253, "TEXT_COLOR": 235, "LINE_NUMBER_COLOR": 246,
@@ -119,6 +122,7 @@ DEFAULT_THEMES = {
         "RULER_COLOR": 249,
         "LINE_LENGTH_ERROR_COLOR": 160, "STRING_COLOR": 25,
         "DECLARATION_COLOR": 160, "COMMENT_COLOR": 101,
+        "WORD_MATCH_COLOR": 152,
     },
 }
 # flake8/pycodestyle's own default max-line-length, reused here so a
@@ -477,56 +481,90 @@ def _ansi(key, value):
     return f"\x1b[{prefix};5;{value}m"
 
 
-_settings, _colors, _filetype_overrides = _load()
+def _apply_loaded_state():
+    """(Re-)reads ~/.minirc and reassigns every module attribute
+    below from it - called once at import time, and again by
+    `reload()` (see `:refresh`) to pick up hand edits made while
+    Mini is already running. Every other module reaches these
+    through `theme.NAME`, never `from theme import NAME`, so
+    reassigning them here is all a reload ever needs - nothing
+    elsewhere holds its own stale copy."""
+    global _settings, _colors, _filetype_overrides
+    global SHOW_NUMBER_LINE, SHOW_LINE_INDICATOR, MAX_COLS_ENABLED
+    global MAX_COLS, INDENT_WITH_TABS, TAB_SIZE, MOUSE_ENABLED
+    global BACKGROUND_COLOR, TEXT_COLOR, BASE_STYLE, COLOR_RESET
+    global LINE_NUMBER_COLOR, CURRENT_LINE_INDICATOR_COLOR
+    global BRACKET_MATCH_START, BRACKET_MATCH_END
+    global KEYWORD_COLOR, DUNDER_COLOR, TYPE_COLOR, FUNCTION_COLOR
+    global SUGGESTION_COLOR, SUGGESTION_RESET
+    global ACTIVE_TAB_COLOR, INACTIVE_TAB_COLOR
+    global RULER_COLOR, LINE_LENGTH_ERROR_COLOR, STRING_COLOR
+    global DECLARATION_COLOR, COMMENT_COLOR, WORD_MATCH_START, WORD_MATCH_END
 
-SHOW_NUMBER_LINE = _settings["SHOW_NUMBER_LINE"]
-SHOW_LINE_INDICATOR = _settings["SHOW_LINE_INDICATOR"]
-MAX_COLS_ENABLED = _settings["MAX_COLS_ENABLED"]
-MAX_COLS = _settings["MAX_COLS"]
-INDENT_WITH_TABS = _settings["INDENT_WITH_TABS"]
-TAB_SIZE = _settings["TAB_SIZE"]
-MOUSE_ENABLED = _settings["MOUSE_ENABLED"]
+    _settings, _colors, _filetype_overrides = _load()
 
-BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", _colors["BACKGROUND_COLOR"])
-TEXT_COLOR = _ansi("TEXT_COLOR", _colors["TEXT_COLOR"])
-BASE_STYLE = BACKGROUND_COLOR + TEXT_COLOR
-COLOR_RESET = TEXT_COLOR
+    SHOW_NUMBER_LINE = _settings["SHOW_NUMBER_LINE"]
+    SHOW_LINE_INDICATOR = _settings["SHOW_LINE_INDICATOR"]
+    MAX_COLS_ENABLED = _settings["MAX_COLS_ENABLED"]
+    MAX_COLS = _settings["MAX_COLS"]
+    INDENT_WITH_TABS = _settings["INDENT_WITH_TABS"]
+    TAB_SIZE = _settings["TAB_SIZE"]
+    MOUSE_ENABLED = _settings["MOUSE_ENABLED"]
 
-LINE_NUMBER_COLOR = _ansi("LINE_NUMBER_COLOR", _colors["LINE_NUMBER_COLOR"])
-CURRENT_LINE_INDICATOR_COLOR = _ansi(
-    "CURRENT_LINE_INDICATOR_COLOR", _colors["CURRENT_LINE_INDICATOR_COLOR"]
-)
+    BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", _colors["BACKGROUND_COLOR"])
+    TEXT_COLOR = _ansi("TEXT_COLOR", _colors["TEXT_COLOR"])
+    BASE_STYLE = BACKGROUND_COLOR + TEXT_COLOR
+    COLOR_RESET = TEXT_COLOR
 
-BRACKET_MATCH_START = _ansi(
-    "BRACKET_MATCH_COLOR", _colors["BRACKET_MATCH_COLOR"]
-)
-BRACKET_MATCH_END = BACKGROUND_COLOR
+    LINE_NUMBER_COLOR = _ansi("LINE_NUMBER_COLOR", _colors["LINE_NUMBER_COLOR"])
+    CURRENT_LINE_INDICATOR_COLOR = _ansi(
+        "CURRENT_LINE_INDICATOR_COLOR", _colors["CURRENT_LINE_INDICATOR_COLOR"]
+    )
 
-KEYWORD_COLOR = _ansi("KEYWORD_COLOR", _colors["KEYWORD_COLOR"])
-DUNDER_COLOR = _ansi("DUNDER_COLOR", _colors["DUNDER_COLOR"])
-TYPE_COLOR = _ansi("TYPE_COLOR", _colors["TYPE_COLOR"])
-FUNCTION_COLOR = _ansi("FUNCTION_COLOR", _colors["FUNCTION_COLOR"])
+    BRACKET_MATCH_START = _ansi(
+        "BRACKET_MATCH_COLOR", _colors["BRACKET_MATCH_COLOR"]
+    )
+    BRACKET_MATCH_END = BACKGROUND_COLOR
 
-SUGGESTION_COLOR = _ansi("SUGGESTION_COLOR", _colors["SUGGESTION_COLOR"])
-SUGGESTION_RESET = BASE_STYLE
+    KEYWORD_COLOR = _ansi("KEYWORD_COLOR", _colors["KEYWORD_COLOR"])
+    DUNDER_COLOR = _ansi("DUNDER_COLOR", _colors["DUNDER_COLOR"])
+    TYPE_COLOR = _ansi("TYPE_COLOR", _colors["TYPE_COLOR"])
+    FUNCTION_COLOR = _ansi("FUNCTION_COLOR", _colors["FUNCTION_COLOR"])
+
+    SUGGESTION_COLOR = _ansi("SUGGESTION_COLOR", _colors["SUGGESTION_COLOR"])
+    SUGGESTION_RESET = BASE_STYLE
+
+    ACTIVE_TAB_COLOR = _ansi("ACTIVE_TAB_COLOR", _colors["ACTIVE_TAB_COLOR"])
+    INACTIVE_TAB_COLOR = _ansi(
+        "INACTIVE_TAB_COLOR", _colors["INACTIVE_TAB_COLOR"]
+    )
+
+    RULER_COLOR = _ansi("RULER_COLOR", _colors["RULER_COLOR"])
+    LINE_LENGTH_ERROR_COLOR = _ansi(
+        "LINE_LENGTH_ERROR_COLOR", _colors["LINE_LENGTH_ERROR_COLOR"]
+    )
+    STRING_COLOR = _ansi("STRING_COLOR", _colors["STRING_COLOR"])
+    DECLARATION_COLOR = _ansi(
+        "DECLARATION_COLOR", _colors["DECLARATION_COLOR"]
+    )
+    COMMENT_COLOR = _ansi("COMMENT_COLOR", _colors["COMMENT_COLOR"])
+    WORD_MATCH_START = _ansi("WORD_MATCH_COLOR", _colors["WORD_MATCH_COLOR"])
+    WORD_MATCH_END = BACKGROUND_COLOR
+
 
 SELECTION_START = "\x1b[7m"
 SELECTION_END = "\x1b[27m"
 
-ACTIVE_TAB_COLOR = _ansi("ACTIVE_TAB_COLOR", _colors["ACTIVE_TAB_COLOR"])
-INACTIVE_TAB_COLOR = _ansi(
-    "INACTIVE_TAB_COLOR", _colors["INACTIVE_TAB_COLOR"]
-)
+_apply_loaded_state()
 
-RULER_COLOR = _ansi("RULER_COLOR", _colors["RULER_COLOR"])
-LINE_LENGTH_ERROR_COLOR = _ansi(
-    "LINE_LENGTH_ERROR_COLOR", _colors["LINE_LENGTH_ERROR_COLOR"]
-)
-STRING_COLOR = _ansi("STRING_COLOR", _colors["STRING_COLOR"])
-DECLARATION_COLOR = _ansi(
-    "DECLARATION_COLOR", _colors["DECLARATION_COLOR"]
-)
-COMMENT_COLOR = _ansi("COMMENT_COLOR", _colors["COMMENT_COLOR"])
+
+def reload():
+    """Re-reads ~/.minirc and applies it live - see `:refresh`. Never
+    touches any buffer/tab/undo state; callers that care about a
+    stale differential-render cache or the mouse-reporting escape
+    sequence handle those themselves, since only they know whether
+    those actually need anything doing."""
+    _apply_loaded_state()
 
 
 if __name__ == "__main__":

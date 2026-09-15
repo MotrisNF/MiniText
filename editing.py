@@ -17,6 +17,15 @@ UNDO_HISTORY_LIMIT = 1000
 STATUS_TIMEOUT_SECONDS = 4
 
 
+def _is_word_character(character):
+    """Whether `character` is part of a "word" for double-click
+    selection and the highlight-other-occurrences feature - an
+    identifier character (letters, digits, underscore), same as
+    what makes up a name in every language Mini highlights. Anything
+    else (whitespace, punctuation, brackets, quotes) is a boundary."""
+    return character.isalnum() or character == "_"
+
+
 def _indent_unit(file_name):
     """One level of new indentation, per ~/.minirc's INDENT_WITH_TABS
     and TAB_SIZE - or `file_name`'s own [filetype:.ext] override of
@@ -131,6 +140,77 @@ class BufferEditMixin:
         parts.extend(self.lines[start_line + 1:end_line])
         parts.append(self.lines[end_line][:end_column])
         return "\n".join(parts)
+
+    def _word_bounds_at(self, line_index, column):
+        """The (start, end) raw-column bounds of the word touching
+        column `column` of `self.lines[line_index]` - the character
+        right at `column` first, then the one just before it (so a
+        double-click landing exactly on a word's trailing edge, where
+        the cursor itself would sit, still selects that word instead
+        of nothing) - or None if neither side is a word character."""
+        text = self.lines[line_index]
+        probe = column
+        if not (0 <= probe < len(text) and _is_word_character(text[probe])):
+            probe = column - 1
+            if not (
+                0 <= probe < len(text) and _is_word_character(text[probe])
+            ):
+                return None
+        start = probe
+        while start > 0 and _is_word_character(text[start - 1]):
+            start -= 1
+        end = probe + 1
+        while end < len(text) and _is_word_character(text[end]):
+            end += 1
+        return start, end
+
+    def _current_selection_word(self):
+        """The exact text of the current selection if it spans one
+        whole word - one line, entirely word characters, flanked by a
+        non-word character (or the line's edge) on both sides - else
+        None. Deliberately blind to *how* the selection was made
+        (double-click, a mouse drag released, Ctrl+arrow selection):
+        the same check drives the highlight-other-occurrences feature
+        uniformly for all three, recomputed fresh every render so it
+        appears and disappears with the selection itself, with no
+        separate state of its own to fall out of sync."""
+        bounds = self._selection_bounds()
+        if bounds is None:
+            return None
+        start_line, start_column, end_line, end_column = bounds
+        if start_line != end_line:
+            return None
+        text = self.lines[start_line]
+        word = text[start_column:end_column]
+        if not word or not all(_is_word_character(c) for c in word):
+            return None
+        if start_column > 0 and _is_word_character(text[start_column - 1]):
+            return None
+        if end_column < len(text) and _is_word_character(text[end_column]):
+            return None
+        return word
+
+    def _word_match_columns(self, line_index, word):
+        """Every (start, end) raw-column span on `self.lines
+        [line_index]` where `word` occurs as a whole word - exact,
+        case-sensitive text, flanked by a non-word character or the
+        line's edge on both sides, same rule `_current_selection_word`
+        itself is checked against."""
+        text = self.lines[line_index]
+        columns = []
+        search_from = 0
+        word_length = len(word)
+        while True:
+            found = text.find(word, search_from)
+            if found == -1:
+                break
+            end = found + word_length
+            before_ok = found == 0 or not _is_word_character(text[found - 1])
+            after_ok = end == len(text) or not _is_word_character(text[end])
+            if before_ok and after_ok:
+                columns.append((found, end))
+            search_from = found + 1
+        return columns
 
     def _delete_selection(self):
         bounds = self._selection_bounds()

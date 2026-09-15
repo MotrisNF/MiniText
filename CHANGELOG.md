@@ -5,6 +5,37 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+- Fixed the mouse wheel (see "Mouse") acting as a selector after a
+  click: a plain click arms `selection_anchor` (so a *drag* right
+  after it can select), but the wheel handlers moved the cursor
+  without ever clearing it, unlike plain keyboard movement - so
+  scrolling after any click silently turned into "extend a selection
+  from where I clicked" instead of plain navigation. The wheel now
+  always clears any armed/active selection first, the same as a
+  plain (non-`Ctrl`) arrow key already does.
+- Added `:refresh`, which re-reads `~/.minirc` and applies it live -
+  colors, `MAX_COLS`/`INDENT_WITH_TABS`/`TAB_SIZE` (plain and per-
+  `[filetype:...]`), and `MOUSE_ENABLED` - without restarting Mini or
+  losing any open buffer/tab/undo state. A toggled `MOUSE_ENABLED`
+  resends the terminal's mouse-tracking escape sequence immediately,
+  and the screen does a full redraw right after so no row is left
+  showing colors from before the reload.
+- Added Tab-completion to `:cmd`'s command line, shell-style, against
+  file and folder names in the same directory `:cmd` itself runs in
+  (the file's own folder, or the worktree root with no file open).
+  Repeated Tabs cycle through every match in place and wrap around; a
+  token that already contains a `/` is left alone rather than
+  completed against the directory it points into.
+- Added highlight-other-occurrences: whenever the current selection
+  spans exactly one whole word - however it got selected: a
+  double-click, a mouse drag once released, or `Ctrl`+movement - every
+  other case-sensitive whole-word match of it elsewhere in the file is
+  highlighted with the new `WORD_MATCH_COLOR`. It's recomputed fresh
+  every render rather than tracked as its own state, so it appears and
+  disappears together with the selection itself, with nothing to
+  explicitly clear. Double-clicking a word now also selects it (it
+  previously just moved the cursor there, like a single click).
+
 ## 1.8.0 - 2026-09-15
 
 - Added three buttons along the bottom of the worktree panel with
