@@ -549,6 +549,7 @@ class RenderMixin:
             "run_visible": run_visible,
             "editor_rows": editor_rows,
             "row_descriptors": row_descriptors,
+            "visible_rows": visible_rows,
         }
         sidebar_lines = (
             self._worktree_body_lines(visible_rows) if sidebar_visible
@@ -862,12 +863,12 @@ class RenderMixin:
         """What's at 1-indexed screen (column, row) as of the last
         render - one of ("tab_bar", tab_index_or_None), ("mode_bar",
         None), ("status", None), ("sidebar", row_within_panel),
-        ("run_output", row_within_output), or
-        ("editor", line_index, raw_column); None if it doesn't land on
-        anything the last frame actually drew (past the end of the
-        file, say). Resolved against `self._mouse_layout`, a snapshot
-        of the geometry `_render()` last computed, rather than
-        recomputing any of it here."""
+        ("sidebar_button", button_index), ("run_output",
+        row_within_output), or ("editor", line_index, raw_column);
+        None if it doesn't land on anything the last frame actually
+        drew (past the end of the file, say). Resolved against
+        `self._mouse_layout`, a snapshot of the geometry `_render()`
+        last computed, rather than recomputing any of it here."""
         layout = self._mouse_layout
         if layout is None:
             return None
@@ -885,6 +886,11 @@ class RenderMixin:
             return None
         column0 = column - 1
         if layout["sidebar_visible"] and column0 < layout["editor_col_offset"]:
+            button_index = self._worktree_button_index_at(
+                row_offset, layout["visible_rows"]
+            )
+            if button_index is not None:
+                return ("sidebar_button", button_index)
             return ("sidebar", row_offset)
         if layout["run_visible"] and row_offset == layout["editor_rows"]:
             return ("run_divider", None)
@@ -919,6 +925,10 @@ class RenderMixin:
         if target is None:
             return
         region = target[0]
+        if region == "sidebar_button":
+            if kind == "MOUSE_PRESS":
+                self._activate_worktree_button(target[1])
+            return
         if region == "sidebar":
             if kind == "MOUSE_PRESS":
                 self._handle_worktree_click(target[1])

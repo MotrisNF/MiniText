@@ -5,6 +5,30 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.8.0 - 2026-09-15
+
+- Added three buttons along the bottom of the worktree panel with
+  `MOUSE_ENABLED` on - `+ New file`, `+ New folder`,
+  `x Close current tab` - the exact same actions as `Ctrl+F`/
+  `Ctrl+D`/`:q`, reused directly rather than reimplemented, including
+  `:q`'s own save-before-closing prompt for the close button (an
+  unsaved buffer is never silently discarded just because it was a
+  click). They take their own rows out of the panel's file list only
+  when actually shown, so the panel's layout is unchanged with the
+  mouse off.
+- Fixed answering "no" to "Save changes before closing this tab?"
+  (`:q` on a modified buffer) leaving the prompt's own leftover text
+  on the status line with no confirmation of what actually happened -
+  it now shows "Closed without saving". Declining to delete a
+  worktree entry ("Delete file 'x'? (y/n)", `Delete` key) had the same
+  gap; it now shows "Cancelled". Answering "yes" to either already
+  showed a real confirmation ("Saved to ...") and is unchanged.
+- Corrected the README: opening a file from the worktree while the
+  current buffer has unsaved changes was documented as asking whether
+  to save them first, but never actually did - it opens the new file
+  in its own tab, leaving the modified one untouched, exactly as safe
+  but without ever needing to ask.
+
 ## 1.7.1 - 2026-09-15
 
 - Clicking a tab in the tab bar (with `MOUSE_ENABLED` on) now switches

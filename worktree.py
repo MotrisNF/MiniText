@@ -12,6 +12,13 @@ import theme
 WORKTREE_WIDTH = 28
 MIN_EDITOR_WIDTH = 20
 WORKTREE_SEPARATOR_WIDTH = 2
+# Mouse-only buttons drawn at the bottom of the panel (see
+# _worktree_body_lines/_worktree_button_index_at/
+# _activate_worktree_button) - one row each, in this order, each
+# comfortably under WORKTREE_WIDTH on its own.
+_WORKTREE_BUTTON_LABELS = (
+    "+ New file", "+ New folder", "x Close current tab",
+)
 
 
 class WorktreePanelMixin:
@@ -126,6 +133,7 @@ class WorktreePanelMixin:
         path, name, is_directory, _ = entries[self.worktree_cursor]
         kind = "folder" if is_directory else "file"
         if not self._confirm(f"Delete {kind} '{name}'? (y/n)"):
+            self.status = "Cancelled"
             return
         try:
             if is_directory:
@@ -176,6 +184,31 @@ class WorktreePanelMixin:
         if already_selected:
             self._worktree_activate(entries)
 
+    def _worktree_button_index_at(self, panel_row, visible_rows):
+        """Which of `_WORKTREE_BUTTON_LABELS` (if any) sits at
+        `panel_row` - the last few rows of the panel, only there at
+        all when `MOUSE_ENABLED` (see `_worktree_body_lines`, which
+        lays them out identically); None everywhere else, including
+        the whole panel when the buttons aren't being drawn."""
+        if not theme.MOUSE_ENABLED:
+            return None
+        first_button_row = visible_rows - len(_WORKTREE_BUTTON_LABELS)
+        index = panel_row - first_button_row
+        return index if 0 <= index < len(_WORKTREE_BUTTON_LABELS) else None
+
+    def _activate_worktree_button(self, index):
+        """Ctrl+F/Ctrl+D's own worktree actions, plus closing the
+        current tab (`:q`'s own logic, so an unsaved buffer is never
+        silently discarded just because this was a click) - exactly
+        what a click on the matching button (see
+        `_worktree_button_index_at`) means."""
+        if index == 0:
+            self._worktree_create(is_directory=False)
+        elif index == 1:
+            self._worktree_create(is_directory=True)
+        elif index == 2:
+            self._close_tab_prompting_if_modified()
+
     @staticmethod
     def _pad_sidebar(text):
         return text[:WORKTREE_WIDTH].ljust(WORKTREE_WIDTH)
@@ -185,7 +218,10 @@ class WorktreePanelMixin:
         self.worktree_cursor = max(
             0, min(self.worktree_cursor, len(entries) - 1)
         )
-        list_height = max(1, height - 1)
+        button_rows = (
+            len(_WORKTREE_BUTTON_LABELS) if theme.MOUSE_ENABLED else 0
+        )
+        list_height = max(1, height - 1 - button_rows)
         if self.worktree_cursor < self.worktree_scroll:
             self.worktree_scroll = self.worktree_cursor
         elif self.worktree_cursor >= self.worktree_scroll + list_height:
@@ -211,6 +247,11 @@ class WorktreePanelMixin:
                 )
             else:
                 lines.append(plain_row)
-        while len(lines) < height:
+        while len(lines) < height - button_rows:
             lines.append(self._pad_sidebar(""))
+        for label in _WORKTREE_BUTTON_LABELS if button_rows else ():
+            lines.append(
+                f"{theme.SUGGESTION_COLOR}{self._pad_sidebar('  ' + label)}"
+                f"{theme.COLOR_RESET}"
+            )
         return lines[:height]

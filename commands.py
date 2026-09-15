@@ -22,6 +22,26 @@ class CommandMixin:
         self.status = f"Saved to {self.file_name}"
         return True
 
+    def _close_tab_prompting_if_modified(self):
+        """`:q`'s own logic, factored out so the worktree panel's
+        mouse-only "Close current tab" button (see worktree.py) can
+        share it exactly - closing a tab should never silently
+        discard unsaved changes just because it was triggered by a
+        click instead of `:q`."""
+        prompt = (
+            "Save changes before closing this tab? (y/n)"
+            if len(self.tabs) > 1 else
+            "Save changes before exiting? (y/n)"
+        )
+        if not self.modified:
+            self._close_current_tab()
+        elif self._confirm(prompt):
+            if self._save():
+                self._close_current_tab()
+        else:
+            self.status = "Closed without saving"
+            self._close_current_tab()
+
     def _save_all_tabs(self):
         self._sync_active_tab()
         saved = 0
@@ -207,18 +227,7 @@ class CommandMixin:
         if name == "w" and argument is None:
             self._save()
         elif name == "q" and argument is None:
-            prompt = (
-                "Save changes before closing this tab? (y/n)"
-                if len(self.tabs) > 1 else
-                "Save changes before exiting? (y/n)"
-            )
-            if not self.modified:
-                self._close_current_tab()
-            elif self._confirm(prompt):
-                if self._save():
-                    self._close_current_tab()
-            else:
-                self._close_current_tab()
+            self._close_tab_prompting_if_modified()
         elif name == "u" and argument is None:
             self._undo()
         elif name == "r" and argument is None:

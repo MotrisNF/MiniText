@@ -485,6 +485,13 @@ being in the editor.
 | `v`, `Esc`     | Return focus to the editor                                     |
 | `:`, `i`       | Return focus to the editor directly in Command or Insert mode  |
 
+With `MOUSE_ENABLED` on (see "Mouse" below), three buttons appear
+along the bottom of the panel - `+ New file`, `+ New folder`, and
+`x Close current tab` - the same actions as `Ctrl+F`/`Ctrl+D`/`:q`,
+clickable directly. They take up their own rows (shrinking the file
+list by that many lines) only when actually shown, so nothing changes
+about the panel's layout with the mouse off.
+
 ### Mouse
 
 Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
@@ -507,7 +514,9 @@ Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
   opens the file, or expands/collapses the directory - the familiar
   "first click selects, second click opens" a mouse-driven file
   explorer is expected to have. The scroll wheel moves the selection
-  up/down a few entries.
+  up/down a few entries. Three buttons along the bottom of the panel -
+  `+ New file`, `+ New folder`, `x Close current tab` - are clickable
+  directly too (see "Worktree panel").
 - Scrolling over the `:run`/`:lint`/`:cmd` output panel scrolls it,
   the same as `Up`/`Down` already do there.
 
@@ -545,7 +554,9 @@ tab switches to it directly (see "Mouse").
 New files and directories are created inside whichever directory you
 last expanded; collapsing a directory moves that target back up to
 its parent. Opening a file while the current buffer has unsaved
-changes asks whether to save them first.
+changes never touches it - it opens the new file in its own tab
+instead, leaving the modified one exactly as it was, still open, in
+its own tab.
 
 ## Configuration
 
