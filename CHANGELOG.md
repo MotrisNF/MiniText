@@ -5,6 +5,13 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.6.3 - 2026-09-15
+
+- `mini --help` now reads like a short man page instead of a flat
+  list mixing everything together: separate `NAME`, `DESCRIPTION`,
+  `USAGE` (the three invocation forms - `mini`, `mini <file>`,
+  `mini <directory>`), and `OPTIONS` (the `--flag` forms) sections.
+
 ## 1.6.2 - 2026-09-15
 
 - Added Move mode in Visual mode (`m` to toggle): while active, `j`/
