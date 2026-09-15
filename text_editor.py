@@ -6,13 +6,17 @@ loop that routes a keypress to whichever of them handles it."""
 
 import os
 import signal
+import time
 from collections import deque
 
 import terminal
 import updater
 from autocomplete import SuggestionMixin
 from commands import CommandMixin
-from editing import BufferEditMixin, UNDO_HISTORY_LIMIT, _indent_unit
+from editing import (
+    BufferEditMixin, STATUS_TIMEOUT_SECONDS, UNDO_HISTORY_LIMIT,
+    _indent_unit,
+)
 from rendering import RenderMixin
 from run_panel import RunPanelMixin
 from tabs import TabsMixin
@@ -117,7 +121,15 @@ class TextEditor(
             with raw_terminal():
                 while self.running:
                     self._render()
-                    key = read_key()
+                    read_timeout = None
+                    if self.status and self._status_set_at is not None:
+                        read_timeout = max(0.0, STATUS_TIMEOUT_SECONDS - (
+                            time.monotonic() - self._status_set_at
+                        ))
+                    key = read_key(read_timeout)
+                    if key == "IDLE_TIMEOUT":
+                        self.status = ""
+                        continue
                     if key == "RESIZE":
                         self._force_full_redraw = True
                         continue

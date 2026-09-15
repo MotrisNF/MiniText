@@ -2,6 +2,8 @@
 insert/backspace/delete (with auto-closing-pair awareness),
 paste, and the auto-indenting Enter."""
 
+import time
+
 import theme
 
 PAIRS = {"(": ")", "[": "]", "{": "}", "'": "'", '"': '"'}
@@ -9,6 +11,10 @@ BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
 CLOSING_TO_OPENING = {value: key for key, value in BRACKET_PAIRS.items()}
 QUOTE_CHARACTERS = {"'", '"'}
 UNDO_HISTORY_LIMIT = 1000
+# How long a one-off status message ("Saved", "Cancelled", "Created
+# ...", ...) stays on screen before clearing itself, instead of
+# sitting there until some later message happens to overwrite it.
+STATUS_TIMEOUT_SECONDS = 4
 
 
 def _indent_unit(file_name):
@@ -24,6 +30,20 @@ def _indent_unit(file_name):
 
 
 class BufferEditMixin:
+
+    @property
+    def status(self):
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        """Every `self.status = "..."` assignment anywhere in the
+        editor goes through here, timestamping it - the single choke
+        point that makes the message expire on its own (see
+        `_render`'s own check of `_status_set_at`) without having to
+        touch each of the (many) places that set one."""
+        self._status = value
+        self._status_set_at = time.monotonic() if value else None
 
     def _move_vertical(self, amount):
         self.line = max(0, min(len(self.lines) - 1, self.line + amount))

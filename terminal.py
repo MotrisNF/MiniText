@@ -99,7 +99,13 @@ def _pushback_byte(byte):
     _pending_byte = byte
 
 
-def read_key():
+def read_key(timeout=None):
+    """The next key/event - blocking indefinitely if `timeout` is
+    None (the default), or returning "IDLE_TIMEOUT" if `timeout`
+    seconds pass with nothing at all happening (no key, no resize, no
+    background event) - used to let a transient status message
+    expire on its own instead of sitting there until something else
+    happens to overwrite it."""
     stdin_fd = sys.stdin.fileno()
     watch_fds = [stdin_fd]
     if _pending_byte is None and _resize_wakeup_fd is not None:
@@ -110,9 +116,11 @@ def read_key():
         watch_fds.append(_update_check_fd)
     if _pending_byte is None:
         try:
-            ready, _, _ = select.select(watch_fds, [], [])
+            ready, _, _ = select.select(watch_fds, [], [], timeout)
         except InterruptedError:
             return "RESIZE"
+        if not ready:
+            return "IDLE_TIMEOUT"
         if _resize_wakeup_fd is not None and _resize_wakeup_fd in ready:
             try:
                 os.read(_resize_wakeup_fd, 4096)

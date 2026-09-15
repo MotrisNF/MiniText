@@ -144,9 +144,11 @@ usable as a general-purpose text editor for anything else.
   open), so every file you open stays open; `Tab`/`Shift+Tab` cycle
   forward/backward between open tabs in Visual mode. A tab bar always
   sits at the very top of the
-  screen, right above the code - the active tab shares the editor's
-  own background, inactive tabs are drawn in a muted shade, separated
-  by a thin vertical line.
+  screen, right above the code - the active tab has its own color
+  (`ACTIVE_TAB_COLOR`), clearly distinct from both the editor's own
+  background and the muted shade inactive tabs use, so it stands out
+  as "the one that's open" at a glance, separated by a thin vertical
+  line.
 - `:run` executes the current `.py` file and streams its output live
   in a split below the code, over a real pty so `input()` works;
   Ctrl+C interrupts the running program without affecting Mini.
@@ -381,6 +383,11 @@ mode bar shows `(Move: ...)` while it's active as a reminder.
 | `:cmd <text>` | Run `text` as a bash command, output shown the same way |
 | `:help`       | Show the in-editor help screen                       |
 
+A one-off status message (`Saved`, `Cancelled`, `Created <path>`,
+`Nothing to undo`, ...) on the status/command line clears itself after
+a few seconds on its own, rather than sitting there indefinitely until
+some later message happens to overwrite it.
+
 ### Running a file
 
 `:run` (or `:terminal`) saves the current `.py` file, runs it, and
@@ -490,6 +497,10 @@ Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
   always means "take me there now". Click-and-drag selects text, the
   same as `Ctrl` + an arrow key already does. The scroll wheel moves
   the cursor up/down a few lines at a time.
+- Clicking a tab in the tab bar switches to it, the same as picking it
+  with `Tab`/`Shift+Tab` - same "take me there now" reasoning, so it
+  also switches to Visual mode and releases the worktree/`:run` panel
+  first if either had focus.
 - Clicking in the worktree panel focuses it (the same as pressing
   `w`) and selects whichever entry was clicked; clicking that *same*
   entry again (while the panel was already focused) activates it -
@@ -525,9 +536,11 @@ mode.
 The tab bar is always shown, as the very first row of the screen -
 even with a single tab open. Each tab is a colored block with the
 file name (a filled circle before the name marks unsaved changes);
-the active tab's block matches the editor's own background so it
-reads as "in front", while inactive tabs use a visibly muted shade,
-with a thin vertical line separating each one.
+the active tab's block uses its own dedicated color
+(`ACTIVE_TAB_COLOR`), clearly distinct from both the editor's own
+background and the visibly muted shade inactive tabs use, with a thin
+vertical line separating each one. With `MOUSE_ENABLED` on, clicking a
+tab switches to it directly (see "Mouse").
 
 New files and directories are created inside whichever directory you
 last expanded; collapsing a directory moves that target back up to
@@ -563,6 +576,7 @@ DUNDER_COLOR=11
 TYPE_COLOR=2
 FUNCTION_COLOR=5
 SUGGESTION_COLOR=244
+ACTIVE_TAB_COLOR=240
 INACTIVE_TAB_COLOR=232
 RULER_COLOR=238
 LINE_LENGTH_ERROR_COLOR=196
@@ -702,8 +716,7 @@ Mini is intentionally small. Some notable limitations:
   time rather than scrolling the view independently of it - Mini has
   no notion of a viewport detached from the cursor for the code area
   the way the `:run`/`:lint`/`:cmd` output panel already does for
-  itself. Clicking the tab bar to switch tabs isn't supported either -
-  `Tab`/`Shift+Tab` are the only way to switch tabs today.
+  itself.
 - Elastic tabstops (see "Configuration") have no notion of strings or
   comments: a tab inside either of those is still treated as a column
   separator like any other, same as everything else here that colors

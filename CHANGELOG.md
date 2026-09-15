@@ -5,6 +5,25 @@ matches `VERSION` (what `mini --version` prints).
 
 ## Unreleased
 
+## 1.7.1 - 2026-09-15
+
+- Clicking a tab in the tab bar (with `MOUSE_ENABLED` on) now switches
+  to it directly, the same "a click always means take me there now"
+  reasoning a code-area click already follows - releasing the
+  worktree/`:run` panel's focus and switching to Visual mode first,
+  same as that does too.
+- Added `ACTIVE_TAB_COLOR` to `~/.minirc`: the active tab now has its
+  own distinct color instead of matching the editor's own background,
+  which in practice made it hard to tell which tab was actually open
+  at a glance. An existing `~/.minirc` gets it added automatically
+  (with a sensible default per theme) on the next `mini --update`/
+  reinstall, the same way any other new color already is.
+- A one-off status message (`Saved`, `Cancelled`, `Created <path>`,
+  `Nothing to undo`, ...) now clears itself after a few seconds,
+  instead of sitting on the status line indefinitely until some later
+  message happened to overwrite it - including while the editor is
+  otherwise sitting idle with no keys being pressed at all.
+
 ## 1.7.0 - 2026-09-15
 
 - Added mouse support, off by default (`MOUSE_ENABLED=True` in
