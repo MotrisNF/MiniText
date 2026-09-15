@@ -3,7 +3,38 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
-## Unreleased
+## 1.9.0 - 2026-09-15
+
+- `mini --update`'s messages now show the installed version instead
+  of a commit hash - "Already up to date (version X)." and "Mini
+  updated to version X." - matching what `mini --version` itself
+  reports, rather than a hash with no meaning to whoever's reading it.
+- An update no longer prints `git pull`/`install.sh`'s own raw output
+  while it runs; a spinner (`| / - \`) next to "Updating..." shows
+  instead. That output is still printed, in full, if either step
+  fails - nothing is lost, just hidden while there's nothing to act on.
+- Added hover-highlighting to the worktree panel's `+ New file`/
+  `+ New folder` buttons (`MOUSE_ENABLED` on): mousing over one shows
+  it in the current-line color, the same cue a selected worktree entry
+  already uses.
+- Replaced the worktree panel's "Close current tab" button with a "×"
+  on each tab in the tab bar itself, `MOUSE_ENABLED`-only (a keyboard-
+  only session has no mouse to click it with, and `:q` already closes
+  the current tab). Clicking it closes that tab - even one that isn't
+  the active one - prompting to save first if it's modified, exactly
+  like `:q` already does.
+- Closing the last open tab (`:q`, the new tab-bar ×, or the new
+  "Close Mini" button below) no longer exits Mini outright - it resets
+  to a blank, unnamed buffer instead, the same state `mini` with no
+  file argument starts in. Only closing a tab already in that exact
+  state actually exits, so `:q` (or × / "Close Mini") a second time
+  still quits normally.
+- Added a centered "Close Mini" button, shown only with `MOUSE_ENABLED`
+  on and only once down to that one blank/unnamed/unmodified tab - the
+  only way left to quit with just a mouse, now that closing the last
+  tab no longer does that on its own.
+
+## 1.8.3 - 2026-09-15
 
 - Fixed the mouse wheel (see "Mouse") acting as a selector after a
   click: a plain click arms `selection_anchor` (so a *drag* right

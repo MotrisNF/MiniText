@@ -55,36 +55,54 @@ class RenderMixin:
         marker = "● " if modified else ""
         return marker, name
 
+    def _tab_segment_text(self, index):
+        """The plain (unstyled) text of tab `index`'s own segment in
+        the tab bar, and the 0-indexed offset of its "×" close marker
+        within that text - None when there is none. The × only exists
+        at all in mouse mode (see terminal.py's own docstring on why
+        mouse support is opt-in): without a mouse there's no way to
+        click it, and `:q` already closes tabs just fine, so it would
+        only ever be visual noise for a keyboard-only user."""
+        marker, name = self._tab_label(index)
+        text = f" {marker}{name} "
+        if not theme.MOUSE_ENABLED:
+            return text, None
+        return text + "×", len(text)
+
     def _tab_bar_line(self):
         segments = []
         for index in range(len(self.tabs)):
-            marker, name = self._tab_label(index)
+            text, _ = self._tab_segment_text(index)
             background = (
                 theme.ACTIVE_TAB_COLOR if index == self.active_tab
                 else theme.INACTIVE_TAB_COLOR
             )
             segments.append(
-                f"{background}{theme.TEXT_COLOR} {marker}{name} "
-                f"{theme.BASE_STYLE}"
+                f"{background}{theme.TEXT_COLOR}{text}{theme.BASE_STYLE}"
             )
         separator = f"{theme.LINE_NUMBER_COLOR}│{theme.BASE_STYLE}"
         return separator.join(segments)
 
-    def _tab_index_at(self, column0):
-        """Which tab (index into `self.tabs`) 0-indexed display
-        column `column0` of the tab bar's own text falls on - the
-        same `" {marker}{name} "` segments and `"│"` separators
-        `_tab_bar_line` renders, just measured instead of styled.
-        None past the last tab (the empty space after it, if the bar
-        doesn't fill the whole width)."""
+    def _tab_target_at(self, column0):
+        """(tab_index, is_close) for 0-indexed display column
+        `column0` of the tab bar's own text - the same segments and
+        "│" separators `_tab_bar_line` renders, just measured instead
+        of styled. `is_close` is only ever true when the column lands
+        exactly on the tab's own "×" (see `_tab_segment_text`).
+        (None, False) past the last tab (the empty space after it, if
+        the bar doesn't fill the whole width)."""
         position = 0
         for index in range(len(self.tabs)):
-            marker, name = self._tab_label(index)
-            width = 2 + len(marker) + len(name)
+            text, close_offset = self._tab_segment_text(index)
+            width = len(text)
             if column0 < position + width:
-                return index
+                is_close = (
+                    close_offset is not None
+                    and column0 == position + close_offset
+                )
+                return index, is_close
             position += width + 1
-        return None
+        return None, False
 
     def _elastic_block_bounds(self, line_index, column_index):
         """The maximal contiguous run of lines around `line_index`
@@ -578,6 +596,23 @@ class RenderMixin:
                 if len(row_descriptors) >= editor_rows:
                     break
             wrap_line_index += 1
+        # Closing the last real tab now resets it to blank instead of
+        # exiting Mini (see tabs.py's own docstring on why) - so
+        # there's otherwise no way at all to quit with just a mouse.
+        # This button, shown only once things are down to that one
+        # blank/unnamed/unmodified tab, is that way out; `:q` (typed,
+        # so it needs no mouse) still works too, on this exact same
+        # state, as does clicking it again.
+        show_close_button = (
+            theme.MOUSE_ENABLED and len(self.tabs) <= 1
+            and self.file_name is None and self.lines == [""]
+            and not self.modified
+        )
+        close_box = (
+            self._close_mini_box_geometry(
+                editor_col_offset, terminal_width, editor_rows
+            ) if show_close_button else None
+        )
         # Snapshot of exactly this frame's geometry, so a mouse event
         # arriving before the *next* render (the only time one ever
         # can, since read_key() only runs between one render() call
@@ -595,6 +630,7 @@ class RenderMixin:
             "editor_rows": editor_rows,
             "row_descriptors": row_descriptors,
             "visible_rows": visible_rows,
+            "close_mini_box": close_box,
         }
         sidebar_lines = (
             self._worktree_body_lines(visible_rows) if sidebar_visible
@@ -782,6 +818,8 @@ class RenderMixin:
             self._last_rendered_rows[row_offset] = row_text
 
         output.extend(ruler_overlay)
+        if close_box is not None:
+            output.extend(self._render_close_mini_box(close_box))
         output.append(f"\x1b[{input_row};1H\x1b[K")
         if editor_col_offset:
             output.append(f"\x1b[{input_row};{editor_col_offset + 1}H")
@@ -912,11 +950,56 @@ class RenderMixin:
             display_column += char_width
         return seg_end
 
+    @staticmethod
+    def _close_mini_box_geometry(
+        editor_col_offset, terminal_width, editor_rows
+    ):
+        """Where the centered "Close Mini" box (see `render`'s own
+        `show_close_button`) lands this frame, as both the on-screen
+        rectangle `_render_close_mini_box` draws and the hit-testing
+        rectangle `_mouse_target` checks a click against - the two
+        must always agree, so there's exactly one place computing
+        either. None when the box can't fit at all (a terminal or
+        editor pane too narrow/short for it), rather than drawing
+        something clipped or unclickable."""
+        label = "Close Mini"
+        inner_width = len(label) + 2
+        box_width = inner_width + 2
+        area_width = max(0, terminal_width - editor_col_offset)
+        if box_width > area_width or editor_rows < 3:
+            return None
+        left = editor_col_offset + (area_width - box_width) // 2
+        top_row_offset = max(0, (editor_rows - 3) // 2)
+        return {
+            "left": left, "top_row_offset": top_row_offset,
+            "width": box_width, "label": label,
+            "row_offset_start": top_row_offset,
+            "row_offset_end": top_row_offset + 2,
+            "col_start": left, "col_end": left + box_width - 1,
+        }
+
+    def _render_close_mini_box(self, box):
+        left, width, label = box["left"], box["width"], box["label"]
+        top_row = 2 + box["top_row_offset"]
+        color = theme.SUGGESTION_COLOR
+        top_border = "┌" + "─" * (width - 2) + "┐"
+        label_row = "│" + label.center(width - 2) + "│"
+        bottom_border = "└" + "─" * (width - 2) + "┘"
+        return [
+            f"\x1b[{top_row};{left + 1}H{color}{top_border}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 1};{left + 1}H{color}{label_row}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 2};{left + 1}H{color}{bottom_border}"
+            f"{theme.BASE_STYLE}",
+        ]
+
     def _mouse_target(self, column, row):
         """What's at 1-indexed screen (column, row) as of the last
-        render - one of ("tab_bar", tab_index_or_None), ("mode_bar",
-        None), ("status", None), ("sidebar", row_within_panel),
-        ("sidebar_button", button_index), ("run_output",
+        render - one of ("tab_bar", tab_index_or_None, is_close),
+        ("mode_bar", None), ("status", None), ("sidebar",
+        row_within_panel), ("sidebar_button", button_index),
+        ("close_mini_button", None), ("run_output",
         row_within_output), or ("editor", line_index, raw_column);
         None if it doesn't land on anything the last frame actually
         drew (past the end of the file, say). Resolved against
@@ -929,7 +1012,8 @@ class RenderMixin:
             column0 = column - 1 - layout["editor_col_offset"]
             if column0 < 0:
                 return None
-            return ("tab_bar", self._tab_index_at(column0))
+            tab_index, is_close = self._tab_target_at(column0)
+            return ("tab_bar", tab_index, is_close)
         if row == layout["terminal_height"]:
             return ("mode_bar", None)
         if row == layout["input_row"]:
@@ -938,6 +1022,15 @@ class RenderMixin:
         if row_offset < 0:
             return None
         column0 = column - 1
+        close_box = layout.get("close_mini_box")
+        if (
+            close_box is not None
+            and close_box["row_offset_start"]
+            <= row_offset <= close_box["row_offset_end"]
+            and close_box["col_start"]
+            <= column0 <= close_box["col_end"]
+        ):
+            return ("close_mini_button", None)
         if layout["sidebar_visible"] and column0 < layout["editor_col_offset"]:
             button_index = self._worktree_button_index_at(
                 row_offset, layout["visible_rows"]
@@ -976,11 +1069,22 @@ class RenderMixin:
             return
         target = self._mouse_target(column, row)
         if target is None:
+            if kind == "MOUSE_MOVE":
+                self._hovered_worktree_button = None
             return
         region = target[0]
+        if kind == "MOUSE_MOVE":
+            self._hovered_worktree_button = (
+                target[1] if region == "sidebar_button" else None
+            )
+            return
         if region == "sidebar_button":
             if kind == "MOUSE_PRESS":
                 self._activate_worktree_button(target[1])
+            return
+        if region == "close_mini_button":
+            if kind == "MOUSE_PRESS":
+                self._close_current_tab()
             return
         if region == "sidebar":
             if kind == "MOUSE_PRESS":
@@ -1033,8 +1137,12 @@ class RenderMixin:
             return
         if region == "tab_bar":
             if kind == "MOUSE_PRESS" and target[1] is not None:
+                tab_index, is_close = target[1], target[2]
                 self._reset_focus_for_click()
-                self._switch_to_tab(target[1])
+                if is_close:
+                    self._close_tab_by_index(tab_index)
+                else:
+                    self._switch_to_tab(tab_index)
             return
         if region == "run_output":
             if kind == "MOUSE_WHEEL_UP":

@@ -83,8 +83,24 @@ class TabsMixin:
         self.status = "A new version of Mini is available"
 
     def _close_current_tab(self):
+        """Closing the last tab no longer exits Mini outright - it
+        resets that tab to a blank, unnamed buffer instead, the same
+        state a freshly started `mini` with no file argument opens
+        in. Only closing a tab that's *already* in that state (nothing
+        left to lose) actually exits - so `:q` (or the tab-bar × or
+        the "Close Mini" button, once already down to a lone blank
+        tab) still works exactly as before to quit."""
         if len(self.tabs) <= 1:
-            self.running = False
+            if (
+                self.file_name is None and self.lines == [""]
+                and not self.modified
+            ):
+                self.running = False
+                return
+            self._apply_buffer_state(self._blank_buffer_state())
+            self.tabs = [self._current_buffer_state()]
+            self.active_tab = 0
+            self.selection_anchor = None
             return
         del self.tabs[self.active_tab]
         self.active_tab = min(self.active_tab, len(self.tabs) - 1)

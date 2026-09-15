@@ -26,15 +26,23 @@ class CommandMixin:
         return True
 
     def _close_tab_prompting_if_modified(self):
-        """`:q`'s own logic, factored out so the worktree panel's
-        mouse-only "Close current tab" button (see worktree.py) can
-        share it exactly - closing a tab should never silently
-        discard unsaved changes just because it was triggered by a
-        click instead of `:q`."""
+        """`:q`'s own logic, factored out so the tab bar's mouse-only
+        × (see rendering.py's `_tab_bar_line`) and the centered "Close
+        Mini" button (shown once down to a lone blank tab) can share
+        it exactly - closing a tab should never silently discard
+        unsaved changes just because it was triggered by a click
+        instead of `:q`. Closing the very last tab doesn't exit Mini
+        outright anymore (see `_close_current_tab`) unless it was
+        already blank, so the prompt only ever needs to talk about
+        exiting when that's actually what's about to happen."""
+        already_blank = (
+            self.file_name is None and self.lines == [""]
+            and not self.modified
+        )
         prompt = (
-            "Save changes before closing this tab? (y/n)"
-            if len(self.tabs) > 1 else
             "Save changes before exiting? (y/n)"
+            if len(self.tabs) <= 1 and already_blank else
+            "Save changes before closing this tab? (y/n)"
         )
         if not self.modified:
             self._close_current_tab()
@@ -44,6 +52,34 @@ class CommandMixin:
         else:
             self.status = "Closed without saving"
             self._close_current_tab()
+
+    def _close_tab_by_index(self, index):
+        """Closing a tab by its position in the tab bar (the ×
+        clicked next to its name - see rendering.py's
+        `_tab_bar_line`/`_handle_mouse_event`), which may not be the
+        currently active one. `_close_tab_prompting_if_modified`
+        (and, under it, `_close_current_tab`) only ever knows how to
+        close *the* active tab, so a tab that isn't active is
+        switched to first, closed, then whichever tab should end up
+        active afterwards - the one the user was already on, shifted
+        left by one if it came after the closed tab - is restored."""
+        if index == self.active_tab:
+            self._close_tab_prompting_if_modified()
+            return
+        original_active = self.active_tab
+        tab_count_before = len(self.tabs)
+        self._switch_to_tab(index)
+        self._close_tab_prompting_if_modified()
+        if len(self.tabs) < tab_count_before:
+            restored_index = (
+                original_active - 1 if index < original_active
+                else original_active
+            )
+            self._switch_to_tab(
+                max(0, min(restored_index, len(self.tabs) - 1))
+            )
+        else:
+            self._switch_to_tab(original_active)
 
     def _save_all_tabs(self):
         self._sync_active_tab()

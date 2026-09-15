@@ -107,6 +107,8 @@ class TextEditor(
         self._word_pool_line_index = -1
         self._worktree_entries_cache = None
         self._last_click = None
+        self._hovered_worktree_button = None
+        self._hovered_tab_close = None
 
     def run(self):
         read_fd, write_fd = _enable_resize_wakeup()

@@ -15,10 +15,10 @@ WORKTREE_SEPARATOR_WIDTH = 2
 # Mouse-only buttons drawn at the bottom of the panel (see
 # _worktree_body_lines/_worktree_button_index_at/
 # _activate_worktree_button) - one row each, in this order, each
-# comfortably under WORKTREE_WIDTH on its own.
-_WORKTREE_BUTTON_LABELS = (
-    "+ New file", "+ New folder", "x Close current tab",
-)
+# comfortably under WORKTREE_WIDTH on its own. Closing a tab moved to
+# the × on the tab itself (see rendering.py's _tab_bar_line) - a
+# worktree entry has nothing to do with which *tab* is open.
+_WORKTREE_BUTTON_LABELS = ("+ New file", "+ New folder")
 
 
 class WorktreePanelMixin:
@@ -197,17 +197,13 @@ class WorktreePanelMixin:
         return index if 0 <= index < len(_WORKTREE_BUTTON_LABELS) else None
 
     def _activate_worktree_button(self, index):
-        """Ctrl+F/Ctrl+D's own worktree actions, plus closing the
-        current tab (`:q`'s own logic, so an unsaved buffer is never
-        silently discarded just because this was a click) - exactly
-        what a click on the matching button (see
-        `_worktree_button_index_at`) means."""
+        """Ctrl+F/Ctrl+D's own worktree actions - exactly what a click
+        on the matching button (see `_worktree_button_index_at`)
+        means."""
         if index == 0:
             self._worktree_create(is_directory=False)
         elif index == 1:
             self._worktree_create(is_directory=True)
-        elif index == 2:
-            self._close_tab_prompting_if_modified()
 
     @staticmethod
     def _pad_sidebar(text):
@@ -249,9 +245,16 @@ class WorktreePanelMixin:
                 lines.append(plain_row)
         while len(lines) < height - button_rows:
             lines.append(self._pad_sidebar(""))
-        for label in _WORKTREE_BUTTON_LABELS if button_rows else ():
+        for button_index, label in (
+            enumerate(_WORKTREE_BUTTON_LABELS) if button_rows else ()
+        ):
+            color = (
+                theme.CURRENT_LINE_INDICATOR_COLOR
+                if button_index == self._hovered_worktree_button
+                else theme.SUGGESTION_COLOR
+            )
             lines.append(
-                f"{theme.SUGGESTION_COLOR}{self._pad_sidebar('  ' + label)}"
+                f"{color}{self._pad_sidebar('  ' + label)}"
                 f"{theme.COLOR_RESET}"
             )
         return lines[:height]

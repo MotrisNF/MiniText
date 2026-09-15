@@ -485,12 +485,13 @@ being in the editor.
 | `v`, `Esc`     | Return focus to the editor                                     |
 | `:`, `i`       | Return focus to the editor directly in Command or Insert mode  |
 
-With `MOUSE_ENABLED` on (see "Mouse" below), three buttons appear
-along the bottom of the panel - `+ New file`, `+ New folder`, and
-`x Close current tab` - the same actions as `Ctrl+F`/`Ctrl+D`/`:q`,
-clickable directly. They take up their own rows (shrinking the file
-list by that many lines) only when actually shown, so nothing changes
-about the panel's layout with the mouse off.
+With `MOUSE_ENABLED` on (see "Mouse" below), two buttons appear along
+the bottom of the panel - `+ New file` and `+ New folder` - the same
+actions as `Ctrl+F`/`Ctrl+D`, clickable directly, highlighting as the
+mouse passes over either one. They take up their own rows (shrinking
+the file list by that many lines) only when actually shown, so nothing
+changes about the panel's layout with the mouse off. Closing a tab is
+done from the tab bar itself instead (see "Tabs").
 
 ### Mouse
 
@@ -507,18 +508,25 @@ Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
 - Clicking a tab in the tab bar switches to it, the same as picking it
   with `Tab`/`Shift+Tab` - same "take me there now" reasoning, so it
   also switches to Visual mode and releases the worktree/`:run` panel
-  first if either had focus.
+  first if either had focus. Clicking the "×" next to a tab's name
+  closes that tab instead - even one that isn't the active one -
+  prompting to save first if it's modified, exactly like `:q` does
+  (see "Tabs").
 - Clicking in the worktree panel focuses it (the same as pressing
   `w`) and selects whichever entry was clicked; clicking that *same*
   entry again (while the panel was already focused) activates it -
   opens the file, or expands/collapses the directory - the familiar
   "first click selects, second click opens" a mouse-driven file
   explorer is expected to have. The scroll wheel moves the selection
-  up/down a few entries. Three buttons along the bottom of the panel -
-  `+ New file`, `+ New folder`, `x Close current tab` - are clickable
-  directly too (see "Worktree panel").
+  up/down a few entries. Two buttons along the bottom of the panel -
+  `+ New file`, `+ New folder` - are clickable directly too, and
+  highlight as the mouse passes over them (see "Worktree panel").
 - Scrolling over the `:run`/`:lint`/`:cmd` output panel scrolls it,
   the same as `Up`/`Down` already do there.
+- With the editor down to its last tab, once that tab is blank,
+  unnamed, and unmodified (see "Tabs"), a centered "Close Mini" button
+  appears in the code area - the only way left to quit with just a
+  mouse, since closing the last tab no longer exits Mini on its own.
 
 One real tradeoff to know about: enabling this makes the terminal
 hand click-and-drag over to Mini instead of doing its own native text
@@ -549,7 +557,19 @@ the active tab's block uses its own dedicated color
 (`ACTIVE_TAB_COLOR`), clearly distinct from both the editor's own
 background and the visibly muted shade inactive tabs use, with a thin
 vertical line separating each one. With `MOUSE_ENABLED` on, clicking a
-tab switches to it directly (see "Mouse").
+tab switches to it directly, and each tab also gets its own "×" right
+after its name to close it directly, prompting to save first if it's
+modified - the mouse-only equivalent of `:q` on that specific tab,
+whichever one is currently active or not (see "Mouse"). There's no ×
+without the mouse on, since `:q` already covers this from the
+keyboard.
+
+Closing the very last tab - by `:q`, its ×, or the "Close Mini" button
+(see "Mouse") - no longer exits Mini outright: it resets that tab to a
+blank, unnamed buffer instead, the same state `mini` with no file
+argument starts in. Only closing a tab already in that exact state -
+nothing left to lose - actually exits, so doing it again on that
+now-blank tab is what quits for good.
 
 New files and directories are created inside whichever directory you
 last expanded; collapsing a directory moves that target back up to

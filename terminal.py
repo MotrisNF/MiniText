@@ -50,15 +50,19 @@ def _disable_resize_wakeup(read_fd, write_fd):
     os.close(write_fd)
 
 
-# Button-event tracking (1002 - press/release plus motion while a
-# button is held, not idle movement) with SGR extended coordinates
-# (1006 - decimal, not limited to 223 columns/rows like the older
-# encoding). Only ever sent when MOUSE_ENABLED is on: it makes the
-# terminal stop doing its own click-drag text selection while Mini has
-# focus, since drags are now handed to Mini instead - a real tradeoff,
-# not a free enhancement, which is why it defaults to off.
-_MOUSE_ENABLE = "\x1b[?1002h\x1b[?1006h"
-_MOUSE_DISABLE = "\x1b[?1006l\x1b[?1002l"
+# Any-event tracking (1003 - press/release plus *all* motion, held
+# button or not - needed for hover highlighting) with SGR extended
+# coordinates (1006 - decimal, not limited to 223 columns/rows like
+# the older encoding). Only ever sent when MOUSE_ENABLED is on: it
+# makes the terminal stop doing its own click-drag text selection
+# while Mini has focus, since drags are now handed to Mini instead -
+# a real tradeoff, not a free enhancement, which is why it defaults
+# to off. 1003 is chattier than plain click tracking (every mouse
+# move over the terminal is now a reported event, hover or not), the
+# cost of being able to highlight something under the cursor without
+# a click.
+_MOUSE_ENABLE = "\x1b[?1003h\x1b[?1006h"
+_MOUSE_DISABLE = "\x1b[?1006l\x1b[?1003l"
 
 
 @contextmanager
@@ -214,17 +218,19 @@ def _read_csi_final(stdin_fd):
 
 
 def _read_mouse_event(stdin_fd):
-    """An SGR mouse report (`\\x1b[<{code};{column};{row}M` for press
-    or motion-while-held, `...m` for release) as one of
-    "MOUSE_PRESS:col:row", "MOUSE_DRAG:col:row" (motion with the
-    button still down), "MOUSE_RELEASE:col:row",
-    "MOUSE_WHEEL_UP:col:row", "MOUSE_WHEEL_DOWN:col:row", or
-    "MOUSE_IGNORE" for anything Mini has no use for (a right/middle
-    click, an unparseable report, ...) - never ESC or any other key
-    name, so an unrecognized mouse event can't be mistaken for a real
-    keypress and trigger something unrelated. `column`/`row` are
-    1-indexed terminal coordinates, matching every cursor-positioning
-    escape sequence Mini itself already writes."""
+    """An SGR mouse report (`\\x1b[<{code};{column};{row}M` for press/
+    motion, `...m` for release) as one of "MOUSE_PRESS:col:row",
+    "MOUSE_DRAG:col:row" (motion with the button still down),
+    "MOUSE_MOVE:col:row" (motion with *no* button down - hover, only
+    reported at all because of the 1003 tracking mode),
+    "MOUSE_RELEASE:col:row", "MOUSE_WHEEL_UP:col:row",
+    "MOUSE_WHEEL_DOWN:col:row", or "MOUSE_IGNORE" for anything Mini
+    has no use for (a right/middle click, an unparseable report, ...)
+    - never ESC or any other key name, so an unrecognized mouse event
+    can't be mistaken for a real keypress and trigger something
+    unrelated. `column`/`row` are 1-indexed terminal coordinates,
+    matching every cursor-positioning escape sequence Mini itself
+    already writes."""
     final, params = _read_csi_final(stdin_fd)
     if final not in ("M", "m"):
         return "MOUSE_IGNORE"
@@ -238,11 +244,19 @@ def _read_mouse_event(stdin_fd):
     if code in (64, 65):
         direction = "UP" if code == 64 else "DOWN"
         return f"MOUSE_WHEEL_{direction}:{column}:{row}"
-    if code & 3 != 0:
+    is_motion = bool(code & 32)
+    button = code & 3
+    if button == 3:
+        # No button held: only a real event at all in 1003 mode, and
+        # only meaningful to Mini as hover - a bare "3" with no motion
+        # bit is an artifact of some terminals' own release encoding
+        # in this mode, not something to act on.
+        return f"MOUSE_MOVE:{column}:{row}" if is_motion else "MOUSE_IGNORE"
+    if button != 0:
         return "MOUSE_IGNORE"
     if final == "m":
         return f"MOUSE_RELEASE:{column}:{row}"
-    if code & 32:
+    if is_motion:
         return f"MOUSE_DRAG:{column}:{row}"
     return f"MOUSE_PRESS:{column}:{row}"
 

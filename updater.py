@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 
 _GIT_ENV = dict(
     os.environ,
@@ -123,6 +124,60 @@ def _write_last_check(install_dir):
         pass
 
 
+def _read_version(src_dir):
+    """The installed copy's own VERSION file, read from `src_dir`
+    directly rather than importing main.py for it - called both
+    before and after a pull, so it always reflects whichever commit
+    is actually checked out at the time it's called."""
+    try:
+        with open(
+            os.path.join(src_dir, "VERSION"), encoding="utf-8"
+        ) as f:
+            return f.read().strip()
+    except OSError:
+        return "unknown"
+
+
+_SPINNER_FRAMES = "|/-\\"
+
+
+@contextmanager
+def _spinner(label):
+    """Shows `label` followed by a classic spinning-bar animation
+    (cycling |, /, -, \\) on the current line for as long as the
+    `with` block runs, in place of dumping git/install.sh's own raw
+    output onto the screen for what's normally a silent, successful
+    wait - a failure still gets real diagnostic output printed
+    afterward (see `_apply_update`), this only replaces the *live*
+    stream while things are working."""
+    stop = threading.Event()
+
+    def animate():
+        frame = 0
+        while not stop.is_set():
+            sys.stdout.write(f"\r{label} {_SPINNER_FRAMES[frame % 4]}")
+            sys.stdout.flush()
+            frame += 1
+            stop.wait(0.1)
+        sys.stdout.write("\r" + " " * (len(label) + 2) + "\r")
+        sys.stdout.flush()
+
+    thread = threading.Thread(target=animate, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+
+
+def _print_subprocess_output(result):
+    if result.stdout.strip():
+        print(result.stdout.rstrip())
+    if result.stderr.strip():
+        print(result.stderr.rstrip())
+
+
 def _read_env(install_dir):
     values = {}
     try:
@@ -173,16 +228,14 @@ def _apply_update(src_dir, install_dir):
     pull, a failed reinstall, or a broken `env` file); True on
     success. Reinstalling always goes through install.sh, so this
     also carries forward whatever it does on every install - notably
-    keeping Mini's own jedi-completion virtualenv up to date."""
+    keeping Mini's own jedi-completion virtualenv up to date. Both
+    subprocesses run behind one continuous "Updating... <spinner>" -
+    their own output is only actually printed if one of them fails,
+    so a normal, successful update stays quiet instead of scrolling
+    git/pip/install.sh's own chatter past."""
     status = _git(src_dir, "status", "--porcelain")
     if status.stdout.strip():
         print("The install has uncommitted changes, cancelling the update.")
-        return False
-    pull = subprocess.run(
-        ["git", "-C", src_dir, "pull", "--ff-only"], env=_GIT_ENV
-    )
-    if pull.returncode != 0:
-        print("git pull failed. Update cancelled.")
         return False
     env_values = _read_env(install_dir)
     libdir = env_values.get("LIBDIR", install_dir)
@@ -194,10 +247,26 @@ def _apply_update(src_dir, install_dir):
             "'make install'."
         )
         return False
-    install_result = subprocess.run(
-        ["bash", os.path.join(src_dir, "install.sh"), libdir, bindir]
-    )
-    return install_result.returncode == 0
+    with _spinner("Updating..."):
+        pull = subprocess.run(
+            ["git", "-C", src_dir, "pull", "--ff-only"], env=_GIT_ENV,
+            capture_output=True, text=True,
+        )
+        install_result = None
+        if pull.returncode == 0:
+            install_result = subprocess.run(
+                ["bash", os.path.join(src_dir, "install.sh"), libdir, bindir],
+                capture_output=True, text=True,
+            )
+    if pull.returncode != 0:
+        print("git pull failed. Update cancelled.")
+        _print_subprocess_output(pull)
+        return False
+    if install_result.returncode != 0:
+        print("Reinstall failed.")
+        _print_subprocess_output(install_result)
+        return False
+    return True
 
 
 def _relaunch(install_dir):
@@ -242,7 +311,6 @@ def check_for_updates_on_open():
     _write_last_check(install_dir)
     if not ahead or not _prompt_update_now():
         return
-    print("Updating...")
     if _apply_update(src_dir, install_dir):
         _relaunch(install_dir)
         # Only reached if _relaunch itself couldn't find the launcher.
@@ -310,15 +378,12 @@ def run_update_command():
     if ahead is None:
         print("Could not reach the remote repository.")
         return
-    local_hash = _git(src_dir, "rev-parse", "--short", "HEAD").stdout.strip()
     if not ahead:
-        print(f"Already up to date (commit {local_hash}).")
+        print(f"Already up to date (version {_read_version(src_dir)}).")
         return
-    print("Updating...")
     if not _apply_update(src_dir, install_dir):
         return
-    new_hash = _git(src_dir, "rev-parse", "--short", "HEAD").stdout.strip()
-    print(f"Mini updated to version {new_hash}.")
+    print(f"Mini updated to version {_read_version(src_dir)}.")
 
 
 def run_uninstall_command():
