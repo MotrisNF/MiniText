@@ -65,15 +65,32 @@ def test_ctrl_click_toggles_selection_without_moving_cursor():
         assert fake.worktree_selected_entries == set()
 
 
-def test_plain_click_clears_the_multiselection():
+def test_plain_click_on_an_unselected_entry_clears_the_multiselection():
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
+        open(os.path.join(tmp, "b.txt"), "w", encoding="utf-8").close()
+        open(os.path.join(tmp, "c.txt"), "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake._handle_worktree_click(2, ctrl_held=True)  # select b.txt
+        assert fake.worktree_selected_entries
+        fake._handle_worktree_click(3)  # plain click on c.txt (unselected)
+        assert fake.worktree_selected_entries == set()
+
+
+def test_plain_click_on_an_already_selected_entry_preserves_it():
+    """Covers bugs_conocidos.md: multi-selecting several entries then
+    starting a drag (a plain MOUSE_PRESS on one of them) used to wipe
+    the whole selection before the drag could ever use it, making
+    "move/delete several at once" effectively impossible."""
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
         open(os.path.join(tmp, "b.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._handle_worktree_click(2, ctrl_held=True)
-        assert fake.worktree_selected_entries
-        fake._handle_worktree_click(2)  # plain click on b.txt (not selected)
-        assert fake.worktree_selected_entries == set()
+        fake._handle_worktree_click(2, ctrl_held=True)  # select b.txt
+        selection_before = set(fake.worktree_selected_entries)
+        assert selection_before
+        fake._handle_worktree_click(2)  # plain click on the same b.txt
+        assert fake.worktree_selected_entries == selection_before
 
 
 def test_rendering_a_multiselected_row_does_not_crash():
@@ -96,6 +113,7 @@ def test_rendering_a_multiselected_row_does_not_crash():
 TESTS = [
     test_ctrl_bit_only_appended_to_press_events,
     test_ctrl_click_toggles_selection_without_moving_cursor,
-    test_plain_click_clears_the_multiselection,
+    test_plain_click_on_an_unselected_entry_clears_the_multiselection,
+    test_plain_click_on_an_already_selected_entry_preserves_it,
     test_rendering_a_multiselected_row_does_not_crash,
 ]

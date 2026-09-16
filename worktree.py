@@ -205,37 +205,66 @@ class WorktreePanelMixin:
         return kind == "MOUSE_PRESS" and on_close
 
     def _worktree_delete(self, entries, index=None):
+        """Deletes the entry at `index` (`self.worktree_cursor` if not
+        given) after confirming - or, if that entry is part of a
+        Ctrl+click multi-selection (`self.worktree_selected_entries`),
+        every selected entry together in one confirmation, the same
+        "act on the whole selection" idea `_handle_worktree_drop`
+        already uses for a drag."""
         if not entries:
             return
         index = self.worktree_cursor if index is None else index
         path, name, is_directory, _ = entries[index]
-        kind = "folder" if is_directory else "file"
-        if not self._confirm(f"Delete {kind} '{name}'? (y/n)"):
+        if path in self.worktree_selected_entries:
+            by_path = {entry[0]: entry for entry in entries}
+            targets = [
+                by_path[p] for p in sorted(self.worktree_selected_entries)
+                if p in by_path
+            ]
+        else:
+            targets = [(path, name, is_directory, None)]
+        if len(targets) > 1:
+            names = ", ".join(target[1] for target in targets)
+            prompt = f"Delete {len(targets)} items ({names})? (y/n)"
+        else:
+            kind = "folder" if targets[0][2] else "file"
+            prompt = f"Delete {kind} '{targets[0][1]}'? (y/n)"
+        if not self._confirm(prompt):
             self.status = "Cancelled"
             return
-        try:
-            if is_directory:
-                shutil.rmtree(path)
-                self.worktree_expanded.discard(path)
-            else:
-                os.remove(path)
-        except OSError as error:
-            self.status = f"Could not delete '{name}': {error}"
-            return
-        self._invalidate_worktree_cache()
-        if self.file_name == path:
-            self.status = f"Deleted {path} (still open here, unsaved)"
-        else:
-            self.status = f"Deleted {path}"
+        deleted, errors = [], []
+        for target_path, target_name, target_is_directory, _ in targets:
+            try:
+                if target_is_directory:
+                    shutil.rmtree(target_path)
+                    self.worktree_expanded.discard(target_path)
+                else:
+                    os.remove(target_path)
+                deleted.append(target_path)
+            except OSError as error:
+                errors.append(f"{target_name}: {error}")
+        self.worktree_selected_entries -= set(deleted)
+        if deleted:
+            self._invalidate_worktree_cache()
+        if errors:
+            failed = "; ".join(errors)
+            self.status = f"Deleted {len(deleted)}, failed: {failed}"
+        elif len(deleted) > 1:
+            self.status = f"Deleted {len(deleted)} items"
+        elif deleted and self.file_name == deleted[0]:
+            self.status = f"Deleted {deleted[0]} (still open here, unsaved)"
+        elif deleted:
+            self.status = f"Deleted {deleted[0]}"
         if index <= self.worktree_cursor:
             self.worktree_cursor = max(0, self.worktree_cursor - 1)
 
     def _worktree_delete_by_index(self, index):
         """The worktree row's own hover "×" (mouse mode only, see
         `_worktree_delete_hit_test`) - deletes that specific entry
-        directly, independent of whatever's currently selected
-        (`self.worktree_cursor`), same confirm-then-delete path as
-        pressing `Delete` on the selected one."""
+        directly (or its whole multi-selection, if it's part of one -
+        see `_worktree_delete`), independent of whatever's currently
+        selected (`self.worktree_cursor`), same confirm-then-delete
+        path as pressing `Delete` on the selected one."""
         self._worktree_delete(self._worktree_entries(), index)
 
     def _worktree_entry_at_row(self, panel_row):
@@ -388,14 +417,23 @@ class WorktreePanelMixin:
         entry_index = self.worktree_scroll + (panel_row - 1)
         if entry_index >= len(entries):
             return
+        path, _, is_directory, _ = entries[entry_index]
         if ctrl_held:
-            path = entries[entry_index][0]
             self.worktree_selected_entries.symmetric_difference_update(
                 {path}
             )
             return
-        self.worktree_selected_entries = set()
-        _, _, is_directory, _ = entries[entry_index]
+        # A plain click on an entry that's already part of a
+        # Ctrl+click multi-selection preserves it, rather than
+        # collapsing it down to just this one - this is what makes it
+        # possible to actually drag the whole selection at once
+        # (a drag starts with a plain MOUSE_PRESS; clearing the
+        # selection right here would mean the drop, later, would only
+        # ever see the one entry the drag happened to start on). A
+        # click on anything else still clears it, same "a click starts
+        # fresh" behavior as before.
+        if path not in self.worktree_selected_entries:
+            self.worktree_selected_entries = set()
         already_selected = (
             not newly_focused and entry_index == self.worktree_cursor
         )

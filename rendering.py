@@ -35,6 +35,20 @@ DOUBLE_CLICK_SECONDS = 0.4
 # subject to a terminal's own 256-color palette remapping either.
 _CLOSE_HOVER_COLOR = "\x1b[91m"
 
+# The welcome screen's own banner (a blocky "MINI" wordmark) and
+# subtitle - shown above the "Close Mini" button on the blank/unnamed/
+# unmodified last-tab screen, mouse enabled or not (see
+# bugs_conocidos.md: adapted from a wider prototype in Banner.txt into
+# something that actually fits a typical terminal).
+_BANNER_LINES = (
+    "█   █  ███  █   █  ███",
+    "██ ██   █   ██  █   █ ",
+    "█ █ █   █   █ █ █   █ ",
+    "█   █   █   █  ██   █ ",
+    "█   █  ███  █   █  ███",
+)
+_WELCOME_SUBTITLE = "Open a file to start"
+
 
 def _inline_tab_positions(line):
     """(leading_end, tab_indices): `leading_end` is where `line`'s own
@@ -689,9 +703,13 @@ class RenderMixin:
         # This button, shown only once things are down to that one
         # blank/unnamed/unmodified tab, is that way out; `:q` (typed,
         # so it needs no mouse) still works too, on this exact same
-        # state, as does clicking it again.
+        # state, as does clicking it again. Shown - as part of the
+        # welcome screen below - whether or not the mouse is on, even
+        # though only mouse mode can actually click it; without it,
+        # it's simply not interactive, the same as the banner/subtitle
+        # above it never are either way.
         show_close_button = (
-            theme.MOUSE_ENABLED and len(self.tabs) <= 1
+            len(self.tabs) <= 1
             and is_blank_buffer and self._name_dialog is None
         )
         code_area_left, code_area_width = self._code_area_bounds(
@@ -701,6 +719,11 @@ class RenderMixin:
             self._close_mini_box_geometry(
                 code_area_left, code_area_width, editor_rows
             ) if show_close_button else None
+        )
+        welcome_banner = (
+            self._welcome_banner_geometry(
+                close_box, code_area_left, code_area_width
+            ) if close_box is not None else None
         )
         name_dialog_box = (
             self._name_dialog_box_geometry(
@@ -943,6 +966,8 @@ class RenderMixin:
             self._last_rendered_rows[row_offset] = row_text
 
         output.extend(ruler_overlay)
+        if welcome_banner is not None:
+            output.extend(self._render_welcome_banner(welcome_banner))
         if close_box is not None:
             output.extend(self._render_close_mini_box(close_box))
         if name_dialog_box is not None:
@@ -1167,6 +1192,50 @@ class RenderMixin:
             f"\x1b[{top_row + 2};{left + 1}H{color}{bottom_border}"
             f"{theme.BASE_STYLE}",
         ]
+
+    def _welcome_banner_geometry(self, close_box, area_left, area_width):
+        """Where the banner + subtitle land, directly above the
+        "Close Mini" button (`close_box`) they're anchored to - always
+        computed relative to it so the whole block (banner, subtitle,
+        button) reads as one centered unit rather than two separately
+        placed things. None if there isn't enough width for the wider
+        of the two, or enough height above the button to fit both -
+        the button alone still shows either way, exactly as before
+        this existed."""
+        block_width = max(
+            max(len(line) for line in _BANNER_LINES), len(_WELCOME_SUBTITLE)
+        )
+        if block_width > area_width:
+            return None
+        banner_rows = len(_BANNER_LINES)
+        # banner, one blank row, the subtitle, one blank row, then
+        # close_box's own top border right below.
+        top_row_offset = close_box["top_row_offset"] - banner_rows - 2
+        if top_row_offset < 0:
+            return None
+        return {
+            "left": area_left + (area_width - block_width) // 2,
+            "width": block_width,
+            "banner_top_row_offset": top_row_offset,
+            "subtitle_row_offset": top_row_offset + banner_rows + 1,
+        }
+
+    def _render_welcome_banner(self, banner):
+        left, width = banner["left"], banner["width"]
+        color = theme.SUGGESTION_COLOR
+        output = []
+        for offset, line in enumerate(_BANNER_LINES):
+            row = 2 + banner["banner_top_row_offset"] + offset
+            output.append(
+                f"\x1b[{row};{left + 1}H{color}{line.center(width)}"
+                f"{theme.BASE_STYLE}"
+            )
+        subtitle_row = 2 + banner["subtitle_row_offset"]
+        output.append(
+            f"\x1b[{subtitle_row};{left + 1}H{color}"
+            f"{_WELCOME_SUBTITLE.center(width)}{theme.BASE_STYLE}"
+        )
+        return output
 
     def _name_dialog_box_geometry(
         self, area_left, area_width, editor_rows, label
