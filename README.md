@@ -132,7 +132,13 @@ usable as a general-purpose text editor for anything else.
 - Auto-indentation on Enter, carrying over the current line's actual
   indentation - whatever mix of tabs/spaces it already is - and
   adding one new level (a tab or `TAB_SIZE` spaces, per
-  `INDENT_WITH_TABS`) after a trailing colon. Pressing Enter right
+  `INDENT_WITH_TABS`) after a line that actually opens a new block -
+  one starting with `if`/`elif`/`else`/`for`/`while`/`try`/`except`/
+  `finally`/`with`/`def`/`class`/`match`/`case`/`default` and ending
+  in `:` - rather than any line that merely happens to end in `:` (a
+  comment, a docstring line, a dict/annotation, ...), which would
+  otherwise indent one level further on every line just as long as
+  each kept ending in `:` too. Pressing Enter right
   between a matching pair of brackets (`foo(|)`) instead splits into
   three lines - the opening line, an empty line indented one level
   further where the cursor lands, and the closing bracket on its own
@@ -350,7 +356,7 @@ mode bar shows `(Move: ...)` while it's active as a reminder.
 | `Tab`       | Accept the current autocompletion suggestion, if any (otherwise inserts a tab) |
 | `Enter`     | New line, auto-indented - always, even while a suggestion dropdown is open (use `Tab` to accept a suggestion instead) |
 | `Up` / `Down` | Move the cursor - or, while a suggestion dropdown is open, move the highlighted entry instead |
-| Backspace   | Delete backward; also removes an auto-closed bracket/quote pair if nothing was typed inside it |
+| Backspace   | Delete backward - a whole `TAB_SIZE`-wide indentation block at once right after one (see `INDENT_WITH_TABS`), one character otherwise; also removes an auto-closed bracket/quote pair if nothing was typed inside it |
 | Delete      | Delete forward (the character under the cursor)            |
 | `Esc`       | Dismiss the suggestion dropdown if one is open, otherwise return to Visual mode |
 
@@ -387,6 +393,11 @@ A one-off status message (`Saved`, `Cancelled`, `Created <path>`,
 `Nothing to undo`, ...) on the status/command line clears itself after
 a few seconds on its own, rather than sitting there indefinitely until
 some later message happens to overwrite it.
+
+`:help` (and `mini --help`) adapts to the terminal's actual size and
+scrolls with `Up`/`Down`/`Ctrl+Up`/`Ctrl+Down` when the reference
+doesn't fit on one screen, with a footer showing how many of its lines
+are currently visible.
 
 ### Running a file
 
@@ -500,32 +511,54 @@ at the bottom. With the mouse on, it has its own "×" in the top-right
 corner of its border (turning red on hover) to cancel by clicking;
 `Esc` cancels it either way, mouse on or off.
 
+With `MOUSE_ENABLED` on, the panel also supports per-entry delete on
+hover, `Ctrl`+click multi-selection, and drag & drop to move entries -
+see "Mouse" below for the details.
+
 ### Mouse
 
-Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
-(see "Configuration"). Once enabled:
+On by default (`MOUSE_ENABLED=True` in `~/.minirc` - see
+"Configuration"); set it to `False` there to turn it off. Once
+enabled:
 
-- Clicking in the code area places the cursor there and switches to
-  Visual mode - even from Insert, Command, or Search, and even if the
-  worktree panel or the `:run`/`:lint`/`:cmd` output panel had focus,
-  on the theory that pointing at a spot in the code and clicking
-  always means "take me there now". Click-and-drag selects text, the
-  same as `Ctrl` + an arrow key already does. The scroll wheel moves
-  the cursor up/down a few lines at a time.
+- Clicking in the code area places the cursor there; from Command,
+  Search, or with the worktree/`:run` panel focused, it also switches
+  to Visual mode, on the theory that pointing at a spot in the code
+  and clicking always means "take me there now" - clicking while
+  already in Insert mode is the one exception: it only moves the
+  cursor and leaves you typing, exactly like a click in Visual mode
+  itself does, `Esc` remaining the only way out of Insert.
+  Click-and-drag selects text, the same as `Ctrl` + an arrow key
+  already does. The scroll wheel moves the cursor up/down a few lines
+  at a time.
 - Clicking a tab in the tab bar switches to it, the same as picking it
   with `Tab`/`Shift+Tab` - same "take me there now" reasoning, so it
-  also switches to Visual mode and releases the worktree/`:run` panel
-  first if either had focus. Clicking the "×" next to a tab's name
-  (which turns red as the mouse passes over it) closes that tab
-  instead - even one that isn't the active one - prompting to save
+  also releases the worktree/`:run` panel first if either had focus,
+  switching to Visual mode too unless you were already in Insert (the
+  same exception a code-area click has). Clicking the "×" next to a
+  tab's name (which turns red as the mouse passes over it) closes that
+  tab instead - even one that isn't the active one - prompting to save
   first if it's modified, exactly like `:q` does (see "Tabs").
 - Clicking in the worktree panel focuses it (the same as pressing
   `w`) and selects whichever entry was clicked; clicking that *same*
   entry again (while the panel was already focused) activates it -
-  opens the file, or expands/collapses the directory - the familiar
-  "first click selects, second click opens" a mouse-driven file
-  explorer is expected to have. The scroll wheel moves the selection
-  up/down a few entries. Two buttons along the bottom of the panel -
+  opens the file - the familiar "first click selects, second click
+  opens" a mouse-driven file explorer is expected to have. A directory
+  is the one exception: a single click on it, once the panel is
+  already focused, expands/collapses it right away - no second click
+  needed, there's no real "open" step to hold back the way there is
+  for a file. Hovering an entry reveals a "×" at the right edge of its
+  row; clicking it asks for confirmation the same way `Delete` already
+  does. `Ctrl`+click toggles that one entry in/out of a
+  multi-selection (shown with its own background color), independent
+  of the normal single-entry selection - a plain click always clears
+  it first. Dragging an entry - or a whole `Ctrl`+click selection
+  together, if the one being dragged is part of one - onto a directory
+  moves it inside, after confirming; dragging it onto a file moves it
+  to that file's own parent directory instead; dropping an entry on
+  itself (a plain click-and-release with no real drag included) is
+  always a silent no-op. The scroll wheel moves the selection up/down
+  a few entries. Two buttons along the bottom of the panel -
   `+ New file`, `+ New folder` - are clickable directly too, and
   highlight as the mouse passes over them (see "Worktree panel").
 - Scrolling over the `:run`/`:lint`/`:cmd` output panel scrolls it,
@@ -538,6 +571,16 @@ Off by default - turn it on with `MOUSE_ENABLED=True` in `~/.minirc`
   panel's own buttons) prompts for its name in a box centered in the
   code area instead of on the status line, with its own "×" to cancel
   by clicking (see "Worktree panel").
+- Any y/n confirmation (closing a modified tab, deleting a worktree
+  entry or a drag & drop move) draws the same way - a box centered in
+  the code area, with clickable "Yes"/"No" buttons instead of a plain
+  status-line prompt. `y`/`n`/`Esc` still work from the keyboard too,
+  either way.
+- With `AUTOSAVE=True` too (off by default - see "Configuration"), the
+  current file saves itself automatically - no confirmation, nothing
+  beyond the usual "Saved to ..." status message - every time a click
+  lands in the code area or tab bar, or Insert mode is entered or left
+  (`i`/`Esc`), as long as it already has a name.
 
 One real tradeoff to know about: enabling this makes the terminal
 hand click-and-drag over to Mini instead of doing its own native text
@@ -605,7 +648,8 @@ MAX_COLS_ENABLED=True
 MAX_COLS=79
 INDENT_WITH_TABS=False
 TAB_SIZE=4
-MOUSE_ENABLED=False
+MOUSE_ENABLED=True
+AUTOSAVE=False
 
 [base]
 BACKGROUND_COLOR=235
@@ -673,11 +717,16 @@ TAB_SIZE=2
   add a `[filetype:.ext]` section for any extension you want your own
   settings for, and delete one to go back to the default - Mini
   itself never writes one for you.
-- `MOUSE_ENABLED` (default `False`) turns on click-to-place-cursor,
-  click-and-drag selection, the scroll wheel, and clicking in the
-  worktree panel - see "Mouse" below for exactly what each does, and
-  the one real tradeoff (the terminal's own click-drag text selection
-  stops working while Mini has focus) that keeps this off by default.
+- `MOUSE_ENABLED` (default `True`) turns on click-to-place-cursor,
+  click-and-drag selection, the scroll wheel, and clicking, multi-
+  selecting, and drag & drop in the worktree panel - see "Mouse" above
+  for exactly what each does, and the one real tradeoff (the
+  terminal's own click-drag text selection stops working while Mini
+  has focus) worth knowing about before turning it off.
+- `AUTOSAVE` (default `False`, `MOUSE_ENABLED` also needed) saves the
+  current file automatically, with no confirmation, on a click in the
+  code area/tab bar or an Insert mode entry/exit - see "Mouse" above
+  for exactly which moments trigger it.
 - Every color is an xterm 256-color palette number (0-255); a chart
   such as <https://www.ditig.com/256-colors-cheat-sheet> is a
   convenient reference. `RULER_COLOR` and `LINE_LENGTH_ERROR_COLOR`

@@ -219,8 +219,9 @@ def _read_csi_final(stdin_fd):
 
 def _read_mouse_event(stdin_fd):
     """An SGR mouse report (`\\x1b[<{code};{column};{row}M` for press/
-    motion, `...m` for release) as one of "MOUSE_PRESS:col:row",
-    "MOUSE_DRAG:col:row" (motion with the button still down),
+    motion, `...m` for release) as one of "MOUSE_PRESS:col:row"
+    (":ctrl" appended if Ctrl was held - see worktree.py's multi-
+    select), "MOUSE_DRAG:col:row" (motion with the button still down),
     "MOUSE_MOVE:col:row" (motion with *no* button down - hover, only
     reported at all because of the 1003 tracking mode),
     "MOUSE_RELEASE:col:row", "MOUSE_WHEEL_UP:col:row",
@@ -230,7 +231,11 @@ def _read_mouse_event(stdin_fd):
     can't be mistaken for a real keypress and trigger something
     unrelated. `column`/`row` are 1-indexed terminal coordinates,
     matching every cursor-positioning escape sequence Mini itself
-    already writes."""
+    already writes. Every MOUSE_* event's own column/row parser
+    tolerates the optional trailing ":ctrl" even where it doesn't
+    care about it, so a click held with Ctrl over an unrelated part
+    of the screen (a dialog, a button, ...) never gets silently
+    dropped for looking unparseable."""
     final, params = _read_csi_final(stdin_fd)
     if final not in ("M", "m"):
         return "MOUSE_IGNORE"
@@ -258,7 +263,8 @@ def _read_mouse_event(stdin_fd):
         return f"MOUSE_RELEASE:{column}:{row}"
     if is_motion:
         return f"MOUSE_DRAG:{column}:{row}"
-    return f"MOUSE_PRESS:{column}:{row}"
+    ctrl_suffix = ":ctrl" if code & 16 else ""
+    return f"MOUSE_PRESS:{column}:{row}{ctrl_suffix}"
 
 
 def set_run_output_fd(fd):

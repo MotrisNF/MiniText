@@ -462,66 +462,115 @@ class RenderMixin:
         )
 
     def _render_help(self):
+        """Renders the in-editor `:help` reference. Unlike the main
+        editor, this bypasses the row-by-row differential renderer
+        entirely and repaints the whole screen on every call - simple,
+        and cheap enough for a screen that only redraws on `q`, a
+        scroll key, or a resize. It does, though, actually look at the
+        real terminal size (`_get_terminal_size()`, same as `_render`
+        itself) and scroll (`self._help_scroll`, moved by
+        `_scroll_help`) so the reference is reachable in full on a
+        terminal too short to fit it all at once, instead of just
+        losing whatever doesn't fit off the bottom."""
         file_name = self.file_name or "[no name]"
+        content_lines = [
+            f"File: {file_name}",
+            "",
+            "Available commands:",
+            "  :help    Show this help",
+            "  :config  Open ~/.minirc as a tab",
+            "  i        Enter Insert mode",
+            "  Tab      Accept suggestion (Insert mode); with 2+",
+            "           matches, Up/Down/Enter also navigate/accept",
+            "  Ctrl+Arrows  Select text (Visual mode)",
+            "  w        Show and focus the worktree panel (Visual mode)",
+            "  :tree    Toggle the worktree panel's visibility",
+            "  :run     Run this .py file, output shown below the code",
+            "           (Ctrl+C interrupts it, Esc unfocuses/closes it,",
+            "           typing sends input to it, Up/Down or",
+            "           Ctrl+Up/Down scroll its output)",
+            "  :lint    Run flake8 + mypy on this file, same output",
+            "           panel as :run; deletes .mypy_cache afterward",
+            "  :cmd <text>  Run text as a bash command, same panel",
+            "  Worktree: Up/Down or j/k move, l expands a directory,",
+            "    h collapses it, Enter opens a file as a tab",
+            "    (or switches to it if already open) or",
+            "    expands/collapses a directory. Ctrl+F new file,",
+            "    Ctrl+D new folder, Ctrl+H toggles hidden files,",
+            "    Del deletes, v/Esc return focus,",
+            "    : or i jump to Command/Insert",
+            "  Tab      Switch to the next tab (Visual mode)",
+            "  Shift+Tab  Switch to the previous tab (Visual mode)",
+            "  h j k l  Move left/down/up/right (Visual mode)",
+            "  <n> then a move   Repeat that move n times (Visual)",
+            "  :l <n>   Jump to line n",
+            "  :b       Jump to the beginning of the file",
+            "  :e       Jump to the end of the file",
+            "  :a       Jump to the start of the current line",
+            "  :f       Jump to the end of the current line",
+            "  :d       Delete selection",
+            "  :d <n>   Delete line n",
+            "  :c       Copy selection, or the current line if none",
+            "  :cl <n>  Copy line n",
+            "  :v       Paste at the cursor",
+            "  :vl <n>  Paste as a new line before line n",
+            "  :u / Ctrl+Z  Undo",
+            "  :r / Ctrl+Y  Redo",
+            "  /text     Search",
+            "  n        Repeat last search (Visual mode)",
+            "  :w       Save",
+            "  :q       Close this tab (asks to save changes if any);",
+            "           exits if it's the last tab open",
+            "  :wq/:qw  Save and close this tab (or exit if last)",
+            "  :w!      Save every open tab, no confirmation",
+            "  :q!      Exit now, discarding all unsaved changes",
+            "  :wq!/:qw!  Save every open tab, then exit",
+            "  q        Return to the editor",
+        ]
+        terminal_size = _get_terminal_size()
+        terminal_height = max(4, terminal_size.lines)
+        # The last row is reserved for a fixed footer (below) rather
+        # than being part of the scrollable content, so it's always
+        # visible - including the scroll hint itself, which would
+        # otherwise be exactly the line most likely to scroll out of
+        # view on a short terminal.
+        content_rows = max(1, terminal_height - 1)
+        max_scroll = max(0, len(content_lines) - content_rows)
+        self._help_scroll = max(0, min(self._help_scroll, max_scroll))
+        visible = content_lines[
+            self._help_scroll:self._help_scroll + content_rows
+        ]
+        footer = "Press q to exit."
+        if max_scroll:
+            footer += (
+                f"  Lines {self._help_scroll + 1}-"
+                f"{self._help_scroll + len(visible)} of "
+                f"{len(content_lines)} - Up/Down/Ctrl+Up/Down scroll."
+            )
         output = [
             "\x1b[2J\x1b[H",
             theme.BASE_STYLE,
-            f"File: {file_name}\r\n\r\n",
-            "Available commands:\r\n",
-            "  :help    Show this help\r\n",
-            "  :config  Open ~/.minirc as a tab\r\n",
-            "  i        Enter Insert mode\r\n",
-            "  Tab      Accept suggestion (Insert mode); with 2+\r\n",
-            "           matches, Up/Down/Enter also navigate/accept\r\n",
-            "  Ctrl+Arrows  Select text (Visual mode)\r\n",
-            "  w        Show and focus the worktree panel (Visual mode)\r\n",
-            "  :tree    Toggle the worktree panel's visibility\r\n",
-            "  :run     Run this .py file, output shown below the code\r\n",
-            "           (Ctrl+C interrupts it, Esc unfocuses/closes it,\r\n",
-            "           typing sends input to it, Up/Down or\r\n",
-            "           Ctrl+Up/Down scroll its output)\r\n",
-            "  :lint    Run flake8 + mypy on this file, same output\r\n",
-            "           panel as :run; deletes .mypy_cache afterward\r\n",
-            "  :cmd <text>  Run text as a bash command, same panel\r\n",
-            "  Worktree: Up/Down or j/k move, l expands a directory,\r\n",
-            "    h collapses it, Enter opens a file as a tab\r\n",
-            "    (or switches to it if already open) or\r\n",
-            "    expands/collapses a directory. Ctrl+F new file,\r\n",
-            "    Ctrl+D new folder, Ctrl+H toggles hidden files,\r\n",
-            "    Del deletes, v/Esc return focus,\r\n",
-            "    : or i jump to Command/Insert\r\n",
-            "  Tab      Switch to the next tab (Visual mode)\r\n",
-            "  Shift+Tab  Switch to the previous tab (Visual mode)\r\n",
-            "  h j k l  Move left/down/up/right (Visual mode)\r\n",
-            "  <n> then a move   Repeat that move n times (Visual)\r\n",
-            "  :l <n>   Jump to line n\r\n",
-            "  :b       Jump to the beginning of the file\r\n",
-            "  :e       Jump to the end of the file\r\n",
-            "  :a       Jump to the start of the current line\r\n",
-            "  :f       Jump to the end of the current line\r\n",
-            "  :d       Delete selection\r\n",
-            "  :d <n>   Delete line n\r\n",
-            "  :c       Copy selection, or the current line if none\r\n",
-            "  :cl <n>  Copy line n\r\n",
-            "  :v       Paste at the cursor\r\n",
-            "  :vl <n>  Paste as a new line before line n\r\n",
-            "  :u / Ctrl+Z  Undo\r\n",
-            "  :r / Ctrl+Y  Redo\r\n",
-            "  /text     Search\r\n",
-            "  n        Repeat last search (Visual mode)\r\n",
-            "  :w       Save\r\n",
-            "  :q       Close this tab (asks to save changes if any);\r\n",
-            "           exits if it's the last tab open\r\n",
-            "  :wq/:qw  Save and close this tab (or exit if last)\r\n",
-            "  :w!      Save every open tab, no confirmation\r\n",
-            "  :q!      Exit now, discarding all unsaved changes\r\n",
-            "  :wq!/:qw!  Save every open tab, then exit\r\n",
-            "  q        Return to the editor\r\n",
-            "\r\nPress q to return to the editor.",
-            "\x1b[?25l\x1b[3;1H\x1b[?25h",
+            "\r\n".join(visible),
+            f"\x1b[{terminal_height};1H\x1b[K{footer}",
+            "\x1b[?25l",
         ]
         sys.stdout.write("".join(output))
         sys.stdout.flush()
+
+    def _scroll_help(self, key):
+        """Moves the help screen's view - UP/DOWN by one line,
+        CTRL-UP/CTRL-DOWN by a page - the same idea as
+        `_scroll_run_output`. Actual clamping to the real content
+        length happens in `_render_help` itself on the next frame, so
+        this only needs the terminal's current height to size a
+        page."""
+        terminal_size = _get_terminal_size()
+        page = max(1, max(4, terminal_size.lines) - 1)
+        step = page if key in ("CTRL-UP", "CTRL-DOWN") else 1
+        if key in ("UP", "CTRL-UP"):
+            self._help_scroll = max(0, self._help_scroll - step)
+        else:
+            self._help_scroll += step
 
     def _render(self):
         if self.help_mode:
@@ -659,6 +708,13 @@ class RenderMixin:
                 self._name_dialog["label"],
             ) if self._name_dialog is not None else None
         )
+        confirm_box = (
+            self._confirm_box_geometry(
+                code_area_left, code_area_width, editor_rows,
+                self._confirm_dialog["prompt"],
+            ) if theme.MOUSE_ENABLED and self._confirm_dialog is not None
+            else None
+        )
         # Snapshot of exactly this frame's geometry, so a mouse event
         # arriving before the *next* render (the only time one ever
         # can, since read_key() only runs between one render() call
@@ -678,6 +734,7 @@ class RenderMixin:
             "visible_rows": visible_rows,
             "close_mini_box": close_box,
             "name_dialog_box": name_dialog_box,
+            "confirm_box": confirm_box,
         }
         sidebar_lines = (
             self._worktree_body_lines(visible_rows) if sidebar_visible
@@ -712,15 +769,24 @@ class RenderMixin:
         # changed (the common case: typing a name doesn't touch
         # self.lines) would otherwise never get redrawn once the box
         # covering it goes away, leaving its border/text stuck on
-        # screen forever.
+        # screen forever. Only the *transition* (appearing/
+        # disappearing) needs this, though - unlike the row loop below,
+        # the box's own content is already repainted unconditionally
+        # every frame further down (see close_box/name_dialog_box
+        # writes past the row loop), so forcing a full clear on every
+        # single keystroke *while* it stays open would only add cost
+        # (a full-screen \x1b[2J plus every visible row resent) with
+        # nothing extra to show for it - that was the real source of
+        # the lag typing into this dialog used to have.
         overlay_box_shown = (
             close_box is not None or name_dialog_box is not None
+            or confirm_box is not None
         )
         full_redraw = (
             self._force_full_redraw
             or (terminal_width, terminal_height) != self._last_terminal_size
             or dropdown_will_show or self._dropdown_was_shown
-            or overlay_box_shown or self._overlay_box_was_shown
+            or overlay_box_shown != self._overlay_box_was_shown
         )
         self._dropdown_was_shown = dropdown_will_show
         self._overlay_box_was_shown = overlay_box_shown
@@ -883,6 +949,10 @@ class RenderMixin:
             output.extend(self._render_name_dialog_box(
                 name_dialog_box, self._name_dialog
             ))
+        if confirm_box is not None:
+            output.extend(
+                self._render_confirm_box(confirm_box, self._confirm_dialog)
+            )
         output.append(f"\x1b[{input_row};1H\x1b[K")
         if editor_col_offset:
             output.append(f"\x1b[{input_row};{editor_col_offset + 1}H")
@@ -1160,11 +1230,83 @@ class RenderMixin:
             f"{theme.BASE_STYLE}",
         ]
 
+    def _confirm_box_geometry(
+        self, area_left, area_width, editor_rows, prompt
+    ):
+        """Where a y/n confirmation (see commands.py's `_confirm`)
+        lands this frame, mouse mode only - same centered-box
+        machinery as `_close_mini_box_geometry`/
+        `_name_dialog_box_geometry`, one row taller than "Close Mini"
+        for its own Yes/No buttons row. `yes_col_start`/`yes_col_end`
+        and `no_col_start`/`no_col_end` are each button's own 0-indexed
+        display-column span within that row, for hit-testing and
+        hover, the same idea as `_name_dialog_box_geometry`'s single
+        `close_col`."""
+        yes_text, gap, no_text = "[ Yes ]", "   ", "[ No ]"
+        buttons_text = yes_text + gap + no_text
+        box_width = max(len(prompt) + 4, len(buttons_text) + 4, 24)
+        box = self._centered_box_geometry(
+            area_left, area_width, editor_rows, box_width, 4
+        )
+        if box is None:
+            return None
+        box["prompt"] = prompt
+        inner_width = box["width"] - 2
+        left_pad = (inner_width - len(buttons_text)) // 2
+        # +1: box["left"] is the column of the border itself ("│"),
+        # the first inner column is one past it.
+        buttons_left0 = box["left"] + 1 + left_pad
+        box["yes_col_start"] = buttons_left0
+        box["yes_col_end"] = buttons_left0 + len(yes_text) - 1
+        box["no_col_start"] = box["yes_col_end"] + len(gap) + 1
+        box["no_col_end"] = box["no_col_start"] + len(no_text) - 1
+        box["buttons_row_offset"] = box["top_row_offset"] + 2
+        return box
+
+    def _render_confirm_box(self, box, dialog):
+        left, width = box["left"], box["width"]
+        top_row = 2 + box["top_row_offset"]
+        color = theme.SUGGESTION_COLOR
+        top_border = "┌" + "─" * (width - 2) + "┐"
+        prompt_row = "│" + box["prompt"][:width - 2].center(width - 2) + "│"
+        yes_text, gap, no_text = "[ Yes ]", "   ", "[ No ]"
+        buttons_text = yes_text + gap + no_text
+        inner_width = width - 2
+        left_pad = (inner_width - len(buttons_text)) // 2
+        right_pad = inner_width - len(buttons_text) - left_pad
+        yes_color = (
+            theme.CURRENT_LINE_INDICATOR_COLOR
+            if dialog.get("hovered") == "yes" else color
+        )
+        no_color = (
+            theme.CURRENT_LINE_INDICATOR_COLOR
+            if dialog.get("hovered") == "no" else color
+        )
+        buttons_inner = (
+            " " * left_pad
+            + f"\x1b[1m{yes_color}{yes_text}\x1b[22m{color}"
+            + gap
+            + f"\x1b[1m{no_color}{no_text}\x1b[22m{color}"
+            + " " * right_pad
+        )
+        buttons_row = f"│{buttons_inner}│"
+        bottom_border = "└" + "─" * (width - 2) + "┘"
+        return [
+            f"\x1b[{top_row};{left + 1}H{color}{top_border}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 1};{left + 1}H{color}{prompt_row}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 2};{left + 1}H{color}{buttons_row}"
+            f"{theme.BASE_STYLE}",
+            f"\x1b[{top_row + 3};{left + 1}H{color}{bottom_border}"
+            f"{theme.BASE_STYLE}",
+        ]
+
     def _mouse_target(self, column, row):
         """What's at 1-indexed screen (column, row) as of the last
         render - one of ("tab_bar", tab_index_or_None, is_close),
         ("mode_bar", None), ("status", None), ("sidebar",
-        row_within_panel), ("sidebar_button", button_index),
+        row_within_panel, column0), ("sidebar_button", button_index),
         ("close_mini_button", None), ("run_output",
         row_within_output), or ("editor", line_index, raw_column);
         None if it doesn't land on anything the last frame actually
@@ -1203,7 +1345,7 @@ class RenderMixin:
             )
             if button_index is not None:
                 return ("sidebar_button", button_index)
-            return ("sidebar", row_offset)
+            return ("sidebar", row_offset, column0)
         if layout["run_visible"] and row_offset == layout["editor_rows"]:
             return ("run_divider", None)
         if layout["run_visible"] and row_offset > layout["editor_rows"]:
@@ -1228,17 +1370,22 @@ class RenderMixin:
         code-area or tab click does to whatever was focused before
         it."""
         kind, _, rest = key.partition(":")
-        column_text, _, row_text = rest.partition(":")
+        column_text, _, remainder = rest.partition(":")
+        row_text, _, modifier = remainder.partition(":")
         try:
             column, row = int(column_text), int(row_text)
         except ValueError:
             return
+        ctrl_held = modifier == "ctrl"
         target = self._mouse_target(column, row)
         if target is None:
             if kind == "MOUSE_MOVE":
                 self._hovered_worktree_button = None
                 self._hovered_tab_close = None
                 self._close_mini_hovered = False
+                self._hovered_worktree_delete = None
+            elif kind == "MOUSE_RELEASE":
+                self._worktree_drag_origin = None
             return
         region = target[0]
         if kind == "MOUSE_MOVE":
@@ -1249,6 +1396,10 @@ class RenderMixin:
                 target[1] if region == "tab_bar" and target[2] else None
             )
             self._close_mini_hovered = region == "close_mini_button"
+            self._hovered_worktree_delete = (
+                self._worktree_delete_hit_test(target[1], target[2])
+                if region == "sidebar" else None
+            )
             return
         if region == "sidebar_button":
             if kind == "MOUSE_PRESS":
@@ -1260,7 +1411,21 @@ class RenderMixin:
             return
         if region == "sidebar":
             if kind == "MOUSE_PRESS":
-                self._handle_worktree_click(target[1])
+                delete_index = self._worktree_delete_hit_test(
+                    target[1], target[2]
+                )
+                if delete_index is not None:
+                    self._worktree_delete_by_index(delete_index)
+                else:
+                    entry = self._worktree_entry_at_row(target[1])
+                    self._worktree_drag_origin = (
+                        entry[0] if entry is not None else None
+                    )
+                    self._handle_worktree_click(target[1], ctrl_held)
+            elif kind == "MOUSE_DRAG":
+                self._update_worktree_drag_status(target[1])
+            elif kind == "MOUSE_RELEASE":
+                self._handle_worktree_drop(target[1])
             elif kind == "MOUSE_WHEEL_UP":
                 self.worktree_cursor = max(0, self.worktree_cursor - 3)
             elif kind == "MOUSE_WHEEL_DOWN":
@@ -1325,13 +1490,21 @@ class RenderMixin:
     def _reset_focus_for_click(self):
         """A click meant to land in the code area or on a tab always
         wins over whatever was focused before it - the worktree panel,
-        the :run/:lint/:cmd output panel, Insert/Command/Search mode -
-        on the theory that it always means "take me there now", the
-        same reasoning `Esc` already follows, just spelled with a
-        mouse instead of a key."""
+        the :run/:lint/:cmd output panel, Command/Search mode - on the
+        theory that it always means "take me there now", the same
+        reasoning `Esc` already follows, just spelled with a mouse
+        instead of a key. Insert mode is the one exception: a click
+        there only moves the cursor, it never kicks you out of typing
+        - Esc is still the only way out of Insert. Also where
+        `AUTOSAVE` (mouse mode only) saves the current file, since
+        every click that lands here is exactly the "the user just
+        moved on to something else" moment that setting means to
+        catch."""
         if self.run_focused:
             self._stop_run()
         self._release_worktree_focus()
         self.command = None
         self.search_query = None
-        self.mode = "visual"
+        if self.mode != "insert":
+            self.mode = "visual"
+        self._maybe_autosave()

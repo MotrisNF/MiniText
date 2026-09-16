@@ -2,6 +2,7 @@
 insert/backspace/delete (with auto-closing-pair awareness),
 paste, and the auto-indenting Enter."""
 
+import re
 import time
 
 import theme
@@ -11,6 +12,17 @@ BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
 CLOSING_TO_OPENING = {value: key for key, value in BRACKET_PAIRS.items()}
 QUOTE_CHARACTERS = {"'", '"'}
 UNDO_HISTORY_LIMIT = 1000
+# Leading keywords a line has to start with for a trailing `:` to
+# really mean "opens a new indented block" - `else:`, `case 1:`,
+# `def foo():`, ... - rather than just happening to end in a colon,
+# the way a comment ("# note:"), a docstring line (":param x:"), or a
+# dict/annotation can too. Not a real parser, just enough to rule out
+# the common non-block cases without tracking strings/comments.
+_BLOCK_OPENING_KEYWORDS = {
+    "if", "elif", "else", "for", "while", "try", "except", "finally",
+    "with", "def", "class", "match", "case", "default",
+}
+_LEADING_WORD_PATTERN = re.compile(r"[A-Za-z_]\w*")
 # How long a one-off status message ("Saved", "Cancelled", "Created
 # ...", ...) stays on screen before clearing itself, instead of
 # sitting there until some later message happens to overwrite it.
@@ -36,6 +48,15 @@ def _indent_unit(file_name):
     `_leading_whitespace`."""
     settings = theme.settings_for(file_name)
     return "\t" if settings["INDENT_WITH_TABS"] else " " * settings["TAB_SIZE"]
+
+
+def _opens_a_block(before):
+    """Whether `before` (the current line up to the cursor, already
+    known to end in a trailing `:`) really looks like it opens a new
+    block - starts with one of `_BLOCK_OPENING_KEYWORDS` - instead of
+    just happening to end in a colon."""
+    match = _LEADING_WORD_PATTERN.match(before.lstrip())
+    return match is not None and match.group() in _BLOCK_OPENING_KEYWORDS
 
 
 class BufferEditMixin:
@@ -327,10 +348,13 @@ class BufferEditMixin:
                 and following_character == PAIRS[removed_character]
             )
             end = self.column + 1 if delete_pair else self.column
+            start = self._soft_tab_backspace_start(current_line) \
+                if not delete_pair and removed_character == " " \
+                else self.column - 1
             self.lines[self.line] = (
-                current_line[: self.column - 1] + current_line[end:]
+                current_line[:start] + current_line[end:]
             )
-            self.column -= 1
+            self.column = start
         elif self.line:
             previous_line = self.lines[self.line - 1]
             self.column = len(previous_line)
@@ -338,6 +362,31 @@ class BufferEditMixin:
                 previous_line + self.lines.pop(self.line)
             )
             self.line -= 1
+
+    def _soft_tab_backspace_start(self, current_line):
+        """Where a Backspace right after a run of leading-indentation
+        spaces should land: `TAB_SIZE` columns back, as one unit,
+        rather than the usual single character - the same size Tab
+        itself inserts as one unit (`_indent_unit`) when
+        INDENT_WITH_TABS is False. Only applies inside the line's own
+        leading whitespace (everything up to the cursor is space-only)
+        and only when the whole block being removed is spaces aligned
+        to a tab stop; anything else (an actual `\\t` character,
+        mid-line alignment spaces, an uneven column) falls back to
+        plain single-character deletion."""
+        settings = theme.settings_for(self.file_name)
+        tab_size = settings["TAB_SIZE"]
+        if (
+            settings["INDENT_WITH_TABS"]
+            or self.column < tab_size
+            or self.column % tab_size
+            or not current_line[:self.column].isspace()
+        ):
+            return self.column - 1
+        block_start = self.column - tab_size
+        if current_line[block_start:self.column] == " " * tab_size:
+            return block_start
+        return self.column - 1
 
     def _delete_forward(self):
         current_line = self.lines[self.line]
@@ -382,7 +431,7 @@ class BufferEditMixin:
             self.line += 1
             self.column = len(inner_indent)
             return
-        if before.rstrip().endswith(":"):
+        if before.rstrip().endswith(":") and _opens_a_block(before):
             indent += _indent_unit(self.file_name)
         self.lines[self.line] = before
         self.lines.insert(self.line + 1, indent + after)

@@ -12,6 +12,7 @@ import theme
 class CommandMixin:
 
     def _save(self):
+        is_new_file = False
         if self.file_name is None:
             self.status = "Name of the file:"
             self._render()
@@ -19,11 +20,32 @@ class CommandMixin:
             if not self.file_name:
                 self.status = "Not saved"
                 return False
+            is_new_file = not os.path.exists(self.file_name)
         with open(self.file_name, "w", encoding="utf-8") as file:
             file.write("\n".join(self.lines))
+        if is_new_file:
+            # A worktree entry may not have existed for this path
+            # before now - the panel's cached listing needs rebuilding
+            # to pick it up, the same as creating a file from the
+            # panel itself already does.
+            self._invalidate_worktree_cache()
         self.modified = False
         self.status = f"Saved to {self.file_name}"
         return True
+
+    def _maybe_autosave(self):
+        """`AUTOSAVE` (mouse mode only, see theme.py) - called from
+        every click that reaches `_reset_focus_for_click` and every
+        Insert-mode entry/exit (`i`/`Esc`). Silent (no status message
+        of its own beyond what `_save` already sets, no confirmation)
+        and a no-op for a brand-new, never-yet-named buffer - autosave
+        picks a moment to save an *existing* file automatically, it
+        never invents a name for one that doesn't have one yet."""
+        if (
+            theme.MOUSE_ENABLED and theme.AUTOSAVE
+            and self.file_name is not None and self.modified
+        ):
+            self._save()
 
     def _close_tab_prompting_if_modified(self):
         """`:q`'s own logic, factored out so the tab bar's mouse-only
@@ -130,14 +152,76 @@ class CommandMixin:
             self._render()
 
     def _confirm(self, prompt):
+        """Blocking y/n prompt. With the mouse on, drawn as its own
+        centered box with Yes/No buttons (see rendering.py's
+        `_confirm_box_geometry`/`_render_confirm_box`), the same
+        "own box in the code area" treatment as
+        `_prompt_name_dialog`'s new-file/new-folder name box - `y`/
+        `Y`/`n`/`N`/`Esc` still work exactly as before either way, so
+        a keyboard-only session (or `MOUSE_ENABLED=False`) sees no
+        change at all."""
+        self._confirm_dialog = {"prompt": prompt, "hovered": None}
         self.status = prompt
-        self._render()
-        while True:
-            key = terminal.read_key()
-            if key in ("y", "Y"):
-                return True
-            if key in ("n", "N", terminal.ESC):
-                return False
+        try:
+            while True:
+                self._render()
+                key = terminal.read_key()
+                if key == "MOUSE_IGNORE":
+                    continue
+                if key.startswith("MOUSE_"):
+                    result = self._handle_confirm_mouse_event(key)
+                    if result is not None:
+                        return result
+                    continue
+                if key in ("y", "Y"):
+                    return True
+                if key in ("n", "N", terminal.ESC):
+                    return False
+        finally:
+            self._confirm_dialog = None
+
+    def _handle_confirm_mouse_event(self, key):
+        """Whether the click/move `key` lands on `_confirm`'s own Yes
+        or No button; None for anything else (keep waiting), True/
+        False for a press on Yes/No respectively - the same shape
+        `_confirm`'s own keyboard branches already return. Hover is
+        tracked on `self._confirm_dialog` itself, the same as
+        `_prompt_name_dialog`'s "×" hover lives on `self._name_dialog`,
+        since that's what `render` already threads through to
+        `_render_confirm_box`."""
+        kind, _, rest = key.partition(":")
+        column_text, _, remainder = rest.partition(":")
+        row_text, _, _modifier = remainder.partition(":")
+        try:
+            column, row = int(column_text), int(row_text)
+        except ValueError:
+            return None
+        layout = self._mouse_layout
+        box = layout.get("confirm_box") if layout else None
+        if box is None:
+            return None
+        row_offset = row - 2
+        column0 = column - 1
+        on_yes = (
+            row_offset == box["buttons_row_offset"]
+            and box["yes_col_start"] <= column0 <= box["yes_col_end"]
+        )
+        on_no = (
+            row_offset == box["buttons_row_offset"]
+            and box["no_col_start"] <= column0 <= box["no_col_end"]
+        )
+        if kind == "MOUSE_MOVE":
+            self._confirm_dialog["hovered"] = (
+                "yes" if on_yes else "no" if on_no else None
+            )
+            return None
+        if kind != "MOUSE_PRESS":
+            return None
+        if on_yes:
+            return True
+        if on_no:
+            return False
+        return None
 
     @staticmethod
     def _parse_command(command):
@@ -339,7 +423,10 @@ class CommandMixin:
         escape sequence too: the terminal was only ever told to start/
         stop reporting mouse events once, when raw_terminal() was
         entered - reassigning theme.MOUSE_ENABLED alone wouldn't make
-        the terminal itself do anything differently."""
+        the terminal itself do anything differently. Also re-lists the
+        worktree panel, the same "pick up whatever changed outside
+        Mini" spirit as the config reload itself, for changes made
+        from another terminal while Mini was open."""
         was_mouse_enabled = theme.MOUSE_ENABLED
         theme.reload()
         if theme.MOUSE_ENABLED != was_mouse_enabled:
@@ -348,6 +435,7 @@ class CommandMixin:
                 else terminal._MOUSE_DISABLE
             )
             sys.stdout.flush()
+        self._invalidate_worktree_cache()
         self._force_full_redraw = True
         self.status = "Reloaded ~/.minirc"
 

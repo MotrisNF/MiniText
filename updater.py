@@ -221,6 +221,31 @@ def _wait_key(message):
         read_key()
 
 
+def _recover_non_fast_forward(src_dir):
+    """Resyncs `src_dir` to the remote branch tip when `git pull
+    --ff-only` fails because local HEAD is no longer an ancestor of
+    the remote - a remote history rewrite (force-push after a
+    mistaken commit, say), rather than a genuine conflict. Before this
+    existed, that state was permanent: every future `git pull
+    --ff-only` (here and in install.sh) would keep failing the exact
+    same way forever, and the only way out was uninstalling and
+    reinstalling by hand. `_apply_update` already confirmed the
+    working tree has no uncommitted changes before this ever runs, so
+    a `reset --hard` to the remote tip can't lose anything real - at
+    worst it replays commits this exact checkout made on top of
+    history the remote has already abandoned, which a fresh `git
+    clone` (what install.sh would do if this directory didn't already
+    exist at all) would discard just the same."""
+    branch = _git(src_dir, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch.returncode != 0:
+        return branch
+    branch_name = branch.stdout.strip()
+    fetch = _git(src_dir, "fetch", "origin", branch_name, timeout=15)
+    if fetch.returncode != 0:
+        return fetch
+    return _git(src_dir, "reset", "--hard", f"origin/{branch_name}")
+
+
 def _apply_update(src_dir, install_dir):
     """Pulls and reinstalls in place - the shared core of `mini
     --update` and the startup update prompt below. Prints why, and
@@ -252,6 +277,8 @@ def _apply_update(src_dir, install_dir):
             ["git", "-C", src_dir, "pull", "--ff-only"], env=_GIT_ENV,
             capture_output=True, text=True,
         )
+        if pull.returncode != 0:
+            pull = _recover_non_fast_forward(src_dir)
         install_result = None
         if pull.returncode == 0:
             install_result = subprocess.run(

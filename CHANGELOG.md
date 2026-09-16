@@ -3,6 +3,105 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.10.0 - 2026-09-16
+
+- Fixed a click in the code area or on a tab while in Insert mode
+  forcing a switch to Visual mode - it now only moves the cursor,
+  exactly like it already does in Visual mode itself; `Esc` remains
+  the only way out of Insert. The worktree panel and the `:run`/
+  `:lint`/`:cmd` output panel still lose focus on that same click,
+  unchanged.
+- Fixed Backspace treating a block of spaces inserted by Tab (the
+  default, `INDENT_WITH_TABS=False`) as plain single characters
+  instead of the one indentation unit it actually is: it now removes
+  a whole `TAB_SIZE`-wide block at once when the cursor sits right
+  after one, inside a line's own leading indentation - the same way
+  Backspace on a real tab character already removed it whole. Spaces
+  used for mid-line alignment, an uneven column, or mixed tabs/spaces
+  are untouched, still removed one at a time as before.
+- Fixed Enter after a line ending in `:` adding another indentation
+  level on *every* subsequent Enter, as long as each new line also
+  happened to end in `:` - a very common shape for a comment
+  (`# steps:`, `# note:`, ...) or a docstring line (`:param x:`), not
+  just real Python block openers. A trailing `:` now only indents when
+  the line actually starts with a real block keyword (`if`/`elif`/
+  `else`/`for`/`while`/`try`/`except`/`finally`/`with`/`def`/`class`/
+  `match`/`case`/`default`) - a comment or docstring line ending in
+  `:` no longer indents at all, while `if x:`, `else:`, `def foo():`,
+  and the like are unaffected.
+- Fixed the new-file/new-folder name dialog (and, incidentally, the
+  "Close Mini" button) forcing a full-screen redraw on every single
+  keystroke while open, instead of only when it actually appears or
+  disappears - noticeable lag typing a name quickly. The dialog's own
+  box was already repainted every frame regardless; only the
+  unconditional full clear behind it was wasted work.
+- The in-editor help screen (`:help`, and `mini --help`) now actually
+  looks at the terminal's real size and can be scrolled (`Up`/`Down`,
+  `Ctrl+Up`/`Ctrl+Down` a page at a time) instead of silently losing
+  whatever didn't fit off the bottom on a short terminal, with a fixed
+  footer line showing `Press q to exit` plus a `Lines X-Y of Z` hint
+  whenever there's more to see.
+- `MOUSE_ENABLED` is now `True` by default for a freshly installed
+  `~/.minirc` - an existing install's own value (`True` or `False`,
+  whichever it already had) is never touched by this, since the
+  update mechanism that carries new settings into an existing
+  `~/.minirc` only ever adds a key that's genuinely missing, never
+  overwrites one already there.
+- Added `AUTOSAVE` to `~/.minirc` (default `False`): with it and
+  `MOUSE_ENABLED` both on, the current file saves itself - no
+  confirmation, no status prompt beyond the usual "Saved to ..." -
+  every time a click lands in the code area or tab bar, or Insert
+  mode is entered or left (`i`/`Esc`), as long as the buffer already
+  has a name. A brand-new, never-yet-named buffer is never
+  auto-named.
+- `~/.minirc`'s generated color sections (`[base]`/`[dark]`/`[light]`)
+  are no longer 18 unexplained `KEY=value` lines in a row: a legend
+  above them now says what each key actually paints, the sections
+  themselves are grouped (Editor / Selection and matching / Syntax /
+  Suggestions and tabs) with a one-line label per group, and each
+  section reminds you whether it's the one `THEME=` actually
+  activates.
+- `mini --update` and `make install` now recover on their own from a
+  remote history rewrite (a force-push after a mistaken commit, say)
+  that used to leave `git pull --ff-only` failing the exact same way
+  forever - previously the only fix was uninstalling and reinstalling
+  by hand. Recovery only ever runs after confirming the installed
+  checkout has no uncommitted changes of its own to lose.
+- `:refresh` now also re-lists the worktree panel (previously it only
+  reloaded `~/.minirc`), and `:w`/`:wq` on a brand-new, never-before-
+  saved buffer now shows the file it just created in the worktree
+  panel immediately instead of only after some other action happened
+  to refresh the listing.
+- Added a hover-only delete "×" to each worktree entry (mouse mode
+  only) - appears at the right edge of whichever row the mouse is
+  actually over, clicking it asks for confirmation the same way
+  pressing `Delete` on the selected entry already does.
+- A single click on a directory in the worktree panel (once it's
+  already focused) now expands/collapses it directly, instead of
+  needing a first click to select and a second to activate - a file
+  still needs that second click to open, unchanged.
+- Added Ctrl+click multi-selection in the worktree panel: toggles that
+  one entry in/out of a selection (shown with its own background
+  color), independent of the normal single-entry cursor; a plain
+  click always clears it first. Used by drag & drop (below) to move
+  every selected entry together.
+- Added drag & drop in the worktree panel (mouse mode only): dragging
+  an entry onto a directory moves it inside, after confirming;
+  dragging it onto a file moves it to that file's own parent directory
+  instead; dropping an entry on itself (including a plain click with
+  no real drag) is always a silent no-op. Dragging a Ctrl+click-
+  selected entry moves the whole selection together.
+- Every y/n confirmation (closing a modified tab, deleting a worktree
+  entry) now draws as a centered box with clickable "Yes"/"No"
+  buttons in mouse mode, the same "own box in the code area" treatment
+  the new-file/new-folder name dialog already had - `y`/`n`/`Esc` still
+  work exactly as before either way, so a keyboard-only session sees
+  no change at all.
+- Internal: added a `tests/` directory (not installed, development
+  only) with a small dependency-free test suite (`python3
+  tests/run_all.py`) covering the bug fixes and additions above that
+  don't need a real terminal to verify.
+
 ## 1.9.2 - 2026-09-15
 
 - Fixed the tab-bar × and name-dialog × (see 1.9.0) not actually

@@ -48,6 +48,7 @@ class TextEditor(
         self.status = ""
         self.running = True
         self.help_mode = False
+        self._help_scroll = 0
         self.move_mode = False
         self.viewport_top = 0
         self.selection_anchor = None
@@ -64,6 +65,7 @@ class TextEditor(
         self.worktree_visible_because_of_focus = False
         self.worktree_root = os.getcwd()
         self.worktree_expanded = set()
+        self.worktree_selected_entries = set()
         self.worktree_show_hidden = False
         self.worktree_cursor = 0
         self.worktree_scroll = 0
@@ -111,7 +113,10 @@ class TextEditor(
         self._hovered_worktree_button = None
         self._hovered_tab_close = None
         self._close_mini_hovered = False
+        self._hovered_worktree_delete = None
+        self._worktree_drag_origin = None
         self._name_dialog = None
+        self._confirm_dialog = None
 
     def run(self):
         read_fd, write_fd = _enable_resize_wakeup()
@@ -169,6 +174,8 @@ class TextEditor(
                             # it's now stale relative to what's
                             # actually on screen.
                             self._force_full_redraw = True
+                        elif key in ("UP", "DOWN", "CTRL-UP", "CTRL-DOWN"):
+                            self._scroll_help(key)
                         continue
                     if self.run_focused:
                         if key == "\x03":
@@ -229,6 +236,7 @@ class TextEditor(
                                 self.status = "Open or create a file first"
                             else:
                                 self.mode = "insert"
+                                self._maybe_autosave()
                         continue
                     if self.command is not None:
                         if key in ("\r", "\n"):
@@ -296,9 +304,12 @@ class TextEditor(
                             self.line, self.column
                         )
                     elif key == ESC:
+                        was_insert = self.mode == "insert"
                         self.mode = "visual"
                         self.command = None
                         self.selection_anchor = None
+                        if was_insert:
+                            self._maybe_autosave()
                     elif self.mode == "visual" and key == ":":
                         self.mode = "command"
                         self.command = ""
@@ -335,6 +346,7 @@ class TextEditor(
                         else:
                             self.mode = "insert"
                             self.selection_anchor = None
+                            self._maybe_autosave()
                     elif (
                         self.mode == "visual"
                         and key == "n"

@@ -67,6 +67,49 @@ import sys
 RC_PATH = os.path.expanduser("~/.minirc")
 BACKUP_PATH = os.path.expanduser("~/.minirc.bak")
 
+# What each color key actually paints, for the legend `_default_rc_text`
+# writes once above the theme sections - grouped the same way the
+# sections themselves lay the keys out below.
+_COLOR_GROUPS = (
+    ("Editor", {
+        "BACKGROUND_COLOR": "editor background",
+        "TEXT_COLOR": "regular text",
+        "LINE_NUMBER_COLOR": "line numbers / gutter",
+        "CURRENT_LINE_INDICATOR_COLOR": (
+            "the -> current-line marker, and hover highlight on "
+            "mouse buttons"
+        ),
+        "RULER_COLOR": "the MAX_COLS ruler line",
+        "LINE_LENGTH_ERROR_COLOR": (
+            "gutter dot for a too-long line, or an unresolved "
+            "import/#include"
+        ),
+    }),
+    ("Selection and matching", {
+        "BRACKET_MATCH_COLOR": "background behind a matching bracket/quote",
+        "WORD_MATCH_COLOR": (
+            "background behind other occurrences of the selected word"
+        ),
+    }),
+    ("Syntax", {
+        "KEYWORD_COLOR": "keywords (if/for/while/...), not def/class",
+        "DECLARATION_COLOR": "def and class themselves",
+        "DUNDER_COLOR": "__dunder__ names",
+        "TYPE_COLOR": "builtin type names (int, str, list, ...)",
+        "FUNCTION_COLOR": "function calls and definitions",
+        "STRING_COLOR": "string literals",
+        "COMMENT_COLOR": "comments, and triple-quoted docstrings",
+    }),
+    ("Suggestions and tabs", {
+        "SUGGESTION_COLOR": (
+            "autocomplete suggestions, and inactive worktree/dialog "
+            "buttons"
+        ),
+        "ACTIVE_TAB_COLOR": "background of the active tab",
+        "INACTIVE_TAB_COLOR": "background of inactive tabs",
+    }),
+)
+
 # Which SGR channel a color key controls: "fg" -> \x1b[38;5;Nm,
 # "bg" -> \x1b[48;5;Nm. Fixed by key name, not user-configurable.
 _COLOR_KINDS = {
@@ -134,7 +177,7 @@ DEFAULT_SETTINGS = {
     "THEME": "base", "SHOW_NUMBER_LINE": True, "SHOW_LINE_INDICATOR": True,
     "MAX_COLS_ENABLED": True, "MAX_COLS": DEFAULT_MAX_COLS,
     "INDENT_WITH_TABS": DEFAULT_INDENT_WITH_TABS, "TAB_SIZE": DEFAULT_TAB_SIZE,
-    "MOUSE_ENABLED": False,
+    "MOUSE_ENABLED": True, "AUTOSAVE": False,
 }
 # Keys a [filetype:.ext] section may override - same names and same
 # parsing as their top-level counterparts in DEFAULT_SETTINGS, just
@@ -196,7 +239,7 @@ def _resolve_settings(primary, backup):
     settings = dict(DEFAULT_SETTINGS)
     for key in (
         "SHOW_NUMBER_LINE", "SHOW_LINE_INDICATOR", "MAX_COLS_ENABLED",
-        "INDENT_WITH_TABS", "MOUSE_ENABLED",
+        "INDENT_WITH_TABS", "MOUSE_ENABLED", "AUTOSAVE",
     ):
         for source in (primary, backup):
             if key in source:
@@ -301,20 +344,43 @@ def _default_rc_text():
         f"TAB_SIZE={DEFAULT_SETTINGS['TAB_SIZE']}",
         "# MOUSE_ENABLED turns on click-to-place-cursor, click-and-drag",
         "# to select, the scroll wheel, and clicking in the worktree",
-        "# panel - off by default because enabling it stops the",
-        "# terminal's own click-drag text selection from working while",
-        "# Mini has focus (most terminals let you hold Shift while",
-        "# dragging to get that back on demand).",
+        "# panel - on by default; set to False to get the terminal's",
+        "# own native click-drag text selection back instead of Mini's",
+        "# (most terminals also let you hold Shift while dragging to",
+        "# get that back on demand even with this on).",
         f"MOUSE_ENABLED={DEFAULT_SETTINGS['MOUSE_ENABLED']}",
+        "# AUTOSAVE, with MOUSE_ENABLED on, saves the current file",
+        "# automatically - no confirmation, no 'unsaved changes'",
+        "# prompt - every time you click anywhere in the code/tab bar",
+        "# or enter/leave Insert mode, as long as it already has a",
+        "# name (a brand-new unnamed buffer is never auto-named).",
+        "# Off by default - it's a convenience some workflows want and",
+        "# others would rather not have making silent writes to disk.",
+        f"AUTOSAVE={DEFAULT_SETTINGS['AUTOSAVE']}",
         "",
-        "# Each color below is an xterm 256-color palette number (0-255).",
-        "# https://www.ditig.com/256-colors-cheat-sheet is a handy chart.",
+        "# Each color below is an xterm 256-color palette number (0-255)",
+        "# - https://www.ditig.com/256-colors-cheat-sheet is a handy",
+        "# chart. What each key paints (same keys in all 3 sections",
+        "# below, only their values differ):",
     ]
+    for _, keys in _COLOR_GROUPS:
+        for key, description in keys.items():
+            lines.append(f"#   {key}: {description}")
     for theme_name in ("base", "dark", "light"):
         lines.append("")
         lines.append(f"[{theme_name}]")
-        for key, value in DEFAULT_THEMES[theme_name].items():
-            lines.append(f"{key}={value}")
+        active = (
+            "active" if theme_name == DEFAULT_SETTINGS["THEME"]
+            else "inactive"
+        )
+        lines.append(
+            "# Only the section matching THEME= above is actually"
+            f" used - this one is {active} by default."
+        )
+        for group_name, keys in _COLOR_GROUPS:
+            lines.append(f"# {group_name}")
+            for key in keys:
+                lines.append(f"{key}={DEFAULT_THEMES[theme_name][key]}")
     lines.append("")
     lines.append(
         "# [filetype:.ext] overrides MAX_COLS_ENABLED/MAX_COLS/"
@@ -347,6 +413,7 @@ def _refresh_backup_if_valid(settings, primary_settings, primary_themes):
         and "INDENT_WITH_TABS" in primary_settings
         and "TAB_SIZE" in primary_settings
         and "MOUSE_ENABLED" in primary_settings
+        and "AUTOSAVE" in primary_settings
         and _is_theme_fully_valid(settings["THEME"], primary_themes)
     )
     if not fully_valid:
@@ -491,7 +558,7 @@ def _apply_loaded_state():
     elsewhere holds its own stale copy."""
     global _settings, _colors, _filetype_overrides
     global SHOW_NUMBER_LINE, SHOW_LINE_INDICATOR, MAX_COLS_ENABLED
-    global MAX_COLS, INDENT_WITH_TABS, TAB_SIZE, MOUSE_ENABLED
+    global MAX_COLS, INDENT_WITH_TABS, TAB_SIZE, MOUSE_ENABLED, AUTOSAVE
     global BACKGROUND_COLOR, TEXT_COLOR, BASE_STYLE, COLOR_RESET
     global LINE_NUMBER_COLOR, CURRENT_LINE_INDICATOR_COLOR
     global BRACKET_MATCH_START, BRACKET_MATCH_END
@@ -510,6 +577,7 @@ def _apply_loaded_state():
     INDENT_WITH_TABS = _settings["INDENT_WITH_TABS"]
     TAB_SIZE = _settings["TAB_SIZE"]
     MOUSE_ENABLED = _settings["MOUSE_ENABLED"]
+    AUTOSAVE = _settings["AUTOSAVE"]
 
     BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", _colors["BACKGROUND_COLOR"])
     TEXT_COLOR = _ansi("TEXT_COLOR", _colors["TEXT_COLOR"])

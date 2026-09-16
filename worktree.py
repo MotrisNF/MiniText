@@ -10,6 +10,13 @@ import shutil
 import terminal
 import theme
 
+# Fixed ANSI red, independent of the active theme - same value as
+# rendering.py's own _CLOSE_HOVER_COLOR (a tab's × on hover), kept as
+# its own copy here rather than imported to avoid a circular import
+# (rendering.py already imports WORKTREE_WIDTH and friends from this
+# module).
+_DELETE_HOVER_COLOR = "\x1b[91m"
+
 WORKTREE_WIDTH = 28
 MIN_EDITOR_WIDTH = 20
 WORKTREE_SEPARATOR_WIDTH = 2
@@ -178,7 +185,8 @@ class WorktreePanelMixin:
         itself since that's what `render` already threads through to
         `_render_name_dialog_box` for the "×"'s own hover styling."""
         kind, _, rest = key.partition(":")
-        column_text, _, row_text = rest.partition(":")
+        column_text, _, remainder = rest.partition(":")
+        row_text, _, _modifier = remainder.partition(":")
         try:
             column, row = int(column_text), int(row_text)
         except ValueError:
@@ -196,10 +204,11 @@ class WorktreePanelMixin:
             return False
         return kind == "MOUSE_PRESS" and on_close
 
-    def _worktree_delete(self, entries):
+    def _worktree_delete(self, entries, index=None):
         if not entries:
             return
-        path, name, is_directory, _ = entries[self.worktree_cursor]
+        index = self.worktree_cursor if index is None else index
+        path, name, is_directory, _ = entries[index]
         kind = "folder" if is_directory else "file"
         if not self._confirm(f"Delete {kind} '{name}'? (y/n)"):
             self.status = "Cancelled"
@@ -218,9 +227,129 @@ class WorktreePanelMixin:
             self.status = f"Deleted {path} (still open here, unsaved)"
         else:
             self.status = f"Deleted {path}"
-        self.worktree_cursor = max(0, self.worktree_cursor - 1)
+        if index <= self.worktree_cursor:
+            self.worktree_cursor = max(0, self.worktree_cursor - 1)
 
-    def _handle_worktree_click(self, panel_row):
+    def _worktree_delete_by_index(self, index):
+        """The worktree row's own hover "×" (mouse mode only, see
+        `_worktree_delete_hit_test`) - deletes that specific entry
+        directly, independent of whatever's currently selected
+        (`self.worktree_cursor`), same confirm-then-delete path as
+        pressing `Delete` on the selected one."""
+        self._worktree_delete(self._worktree_entries(), index)
+
+    def _worktree_entry_at_row(self, panel_row):
+        """The (path, is_directory) of the real entry at `panel_row`
+        (0-indexed from the panel's own top, header included - same
+        convention as `_handle_worktree_click`), or None if that row
+        isn't a real entry (the header, a blank filler row past the
+        last one, or a button row)."""
+        entries = self._worktree_entries()
+        if panel_row <= 0 or not entries:
+            return None
+        entry_index = self.worktree_scroll + (panel_row - 1)
+        if entry_index >= len(entries):
+            return None
+        path, _, is_directory, _ = entries[entry_index]
+        return path, is_directory
+
+    def _update_worktree_drag_status(self, panel_row):
+        """Live feedback while dragging a worktree entry (mouse mode
+        only, see `_handle_worktree_drop`) - a status-line preview of
+        where releasing right now would move it, updated on every
+        MOUSE_DRAG the mouse is still over the sidebar for. No-op with
+        nothing currently being dragged, or while hovering the
+        dragged entry's own row (dropping something on itself is
+        always a no-op, see `_handle_worktree_drop`)."""
+        if self._worktree_drag_origin is None:
+            return
+        entry = self._worktree_entry_at_row(panel_row)
+        if entry is None or entry[0] == self._worktree_drag_origin:
+            return
+        target_path, is_directory = entry
+        destination_dir = (
+            target_path if is_directory else os.path.dirname(target_path)
+        )
+        label = os.path.basename(destination_dir) or destination_dir
+        self.status = f"Release to move into '{label}'"
+
+    def _handle_worktree_drop(self, panel_row):
+        """Finishes a worktree drag started by a MOUSE_PRESS on some
+        entry's row (`self._worktree_drag_origin`, armed in
+        `_handle_mouse_event`) and released on `panel_row`. Dropping
+        on a directory moves the dragged entry (entries, if it was
+        part of a Ctrl+click multi-selection - see
+        `_handle_worktree_click`) inside it; dropping on a file moves
+        it to that file's own parent directory instead - either way
+        after confirming. Releasing on the very entry that was picked
+        up (a plain click-and-release, with no real drag in between,
+        included - press and release then land on the exact same row)
+        is always a silent no-op, never a confirmation prompt for
+        "moving" something nowhere."""
+        origin = self._worktree_drag_origin
+        self._worktree_drag_origin = None
+        if origin is None:
+            return
+        entry = self._worktree_entry_at_row(panel_row)
+        if entry is None:
+            return
+        target_path, target_is_directory = entry
+        if target_path == origin:
+            return
+        destination_dir = (
+            target_path if target_is_directory
+            else os.path.dirname(target_path)
+        )
+        if destination_dir == os.path.dirname(origin):
+            return
+        sources = (
+            sorted(self.worktree_selected_entries)
+            if origin in self.worktree_selected_entries else [origin]
+        )
+        names = ", ".join(os.path.basename(path) for path in sources)
+        destination_label = (
+            os.path.basename(destination_dir) or destination_dir
+        )
+        if not self._confirm(f"Move {names} to '{destination_label}'? (y/n)"):
+            self.status = "Cancelled"
+            return
+        moved, errors = [], []
+        for source in sources:
+            destination = os.path.join(
+                destination_dir, os.path.basename(source)
+            )
+            try:
+                shutil.move(source, destination)
+                moved.append(source)
+            except (OSError, shutil.Error) as error:
+                errors.append(f"{os.path.basename(source)}: {error}")
+        self.worktree_selected_entries -= set(moved)
+        if moved:
+            self._invalidate_worktree_cache()
+        if errors:
+            self.status = f"Moved {len(moved)}, failed: {'; '.join(errors)}"
+        else:
+            self.status = f"Moved {len(moved)} item(s) to {destination_dir}"
+
+    def _worktree_delete_hit_test(self, row_offset, column0):
+        """The worktree entry index under (row_offset, column0) if it
+        falls on that row's own hover "×" (the last 2 display columns
+        of the panel, mouse mode only - see `_worktree_body_lines`);
+        None everywhere else, including a blank filler or button row
+        past the real entries - same bounds check `_handle_worktree_
+        click` already trusts for turning a panel row into an entry
+        index."""
+        if not theme.MOUSE_ENABLED or row_offset <= 0:
+            return None
+        if not (WORKTREE_WIDTH - 2 <= column0 < WORKTREE_WIDTH):
+            return None
+        entries = self._worktree_entries()
+        entry_index = self.worktree_scroll + (row_offset - 1)
+        if entry_index >= len(entries):
+            return None
+        return entry_index
+
+    def _handle_worktree_click(self, panel_row, ctrl_held=False):
         """A mouse click at `panel_row` (0-indexed from the top of the
         sidebar - row 0 is the "Worktree: root" header, matching
         `_worktree_body_lines`'s own layout) always focuses the panel
@@ -232,7 +361,20 @@ class WorktreePanelMixin:
         already focused, i.e. this isn't the click that just focused
         it - activates it instead (open the file, or expand/collapse
         the directory), the "first click selects, second click opens"
-        behavior a mouse-driven file explorer is expected to have."""
+        behavior a mouse-driven file explorer is expected to have. A
+        directory is the one exception: a single click on it (once the
+        panel is already focused) expands/collapses it right away -
+        there's no real "open" step to hold back the way there is for
+        a file, so making it wait for a second click only added a
+        pointless extra click every time.
+
+        A Ctrl+click is a different action entirely - it never opens/
+        expands/collapses anything, it only toggles that one entry in
+        `self.worktree_selected_entries` (for moving several at once,
+        see the worktree's own drag & drop), leaving `worktree_cursor`
+        and everything else untouched. A plain click always clears
+        that multi-selection first, the same "a click starts fresh"
+        behavior a desktop file explorer has."""
         newly_focused = not self.worktree_focused
         if not self.worktree_visible:
             self.worktree_visible = True
@@ -246,11 +388,19 @@ class WorktreePanelMixin:
         entry_index = self.worktree_scroll + (panel_row - 1)
         if entry_index >= len(entries):
             return
+        if ctrl_held:
+            path = entries[entry_index][0]
+            self.worktree_selected_entries.symmetric_difference_update(
+                {path}
+            )
+            return
+        self.worktree_selected_entries = set()
+        _, _, is_directory, _ = entries[entry_index]
         already_selected = (
             not newly_focused and entry_index == self.worktree_cursor
         )
         self.worktree_cursor = entry_index
-        if already_selected:
+        if already_selected or (is_directory and not newly_focused):
             self._worktree_activate(entries)
 
     def _worktree_button_index_at(self, panel_row, visible_rows):
@@ -305,13 +455,43 @@ class WorktreePanelMixin:
             else:
                 label = f"  {name}"
             plain_row = self._pad_sidebar(f"{indent}{label}")
-            if index == self.worktree_cursor:
-                lines.append(
-                    f"{theme.CURRENT_LINE_INDICATOR_COLOR}{plain_row}"
-                    f"{theme.COLOR_RESET}"
+            is_cursor = index == self.worktree_cursor
+            # A Ctrl+click-toggled entry (see _handle_worktree_click)
+            # gets its own background, same idea as WORD_MATCH_COLOR
+            # already highlighting other occurrences of a selected
+            # word elsewhere - the cursor's own indicator still wins
+            # if a row happens to be both.
+            is_multi_selected = (
+                not is_cursor and path in self.worktree_selected_entries
+            )
+            if is_cursor:
+                base_color = theme.CURRENT_LINE_INDICATOR_COLOR
+            elif is_multi_selected:
+                base_color = theme.WORD_MATCH_COLOR
+            else:
+                base_color = None
+            if (
+                theme.MOUSE_ENABLED
+                and index == self._hovered_worktree_delete
+            ):
+                # Reserve the row's own last 2 display columns for a
+                # hover-only delete "×" - only drawn for the entry the
+                # mouse is actually over right now, so a row otherwise
+                # gives no visual hint it's even there (see
+                # bugs_conocidos.md: "al pasar el ratón por encima").
+                # Same before/hover-color/resume-color nesting
+                # `_tab_bar_line` already uses for a tab's own ×.
+                resume = base_color if base_color else theme.COLOR_RESET
+                row_text = (
+                    f"{plain_row[:-2]} {_DELETE_HOVER_COLOR}\x1b[1m×"
+                    f"\x1b[22m{resume}"
                 )
             else:
-                lines.append(plain_row)
+                row_text = plain_row
+            if base_color:
+                lines.append(f"{base_color}{row_text}{theme.COLOR_RESET}")
+            else:
+                lines.append(row_text)
         while len(lines) < height - button_rows:
             lines.append(self._pad_sidebar(""))
         for button_index, label in (

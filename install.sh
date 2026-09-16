@@ -116,7 +116,17 @@ if [ -d "$libdir/src" ] && [ ! -d "$libdir/src/.git" ]; then
 fi
 
 if [ -d "$libdir/src/.git" ]; then
-  git -C "$libdir/src" pull --ff-only --quiet
+  if ! git -C "$libdir/src" pull --ff-only --quiet; then
+    # A remote history rewrite (a force-push after a mistaken commit,
+    # say) leaves a fast-forward pull failing permanently, the same
+    # way every single future update would - resync to the remote
+    # branch tip instead of requiring a manual uninstall/reinstall to
+    # recover (mirrors updater.py's own _recover_non_fast_forward, for
+    # `mini --update`).
+    branch="$(git -C "$libdir/src" rev-parse --abbrev-ref HEAD)"
+    git -C "$libdir/src" fetch --quiet origin "$branch"
+    git -C "$libdir/src" reset --hard --quiet "origin/$branch"
+  fi
   echo "  Updated existing install at $libdir/src"
 else
   git clone --quiet "$srcdir" "$libdir/src"
