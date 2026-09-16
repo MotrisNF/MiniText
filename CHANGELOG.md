@@ -3,6 +3,47 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.11.0 - 2026-09-16
+
+- Fixed a crash (`AttributeError: module 'theme' has no attribute
+  'WORD_MATCH_COLOR'`) the instant a worktree entry was Ctrl+click-
+  selected: the multi-selection row background used a color key that
+  doesn't exist as a plain attribute - `WORD_MATCH_COLOR` is a
+  background color, only exposed as the `WORD_MATCH_START`/
+  `WORD_MATCH_END` pair it actually needs to close itself with
+  (`COLOR_RESET` alone, correct for the cursor's own foreground-only
+  indicator, would have left the background bleeding into whatever
+  came after it even without the crash).
+- Fixed the worktree's per-entry delete "×" only ever revealing itself
+  once the mouse was already exactly where it would be drawn (the
+  last 2 columns of the row) - hovering *anywhere* on a row now
+  reveals its "×"; clicking still only hits it in that same narrow
+  zone as before.
+- Fixed a y/n confirmation box (drag & drop with several or long file
+  names, say) silently failing to appear at all when its prompt was
+  wider than the available code area - it now clamps to fit and
+  truncates the prompt text instead, the same way the new-file/new-
+  folder dialog already truncates a long typed name; `_confirm` no
+  longer blocks with nothing shown for it.
+- Fixed Ctrl+click multi-selecting several worktree entries, then
+  starting a drag with a plain click on one of them, silently
+  collapsing the whole selection down to just that one entry before
+  the drag could ever use it - moving or deleting several entries at
+  once was effectively impossible. A plain click on an entry already
+  part of the selection now preserves it; clicking anything else still
+  clears it, unchanged.
+- The worktree's delete (the per-row "×", or `Delete` on the selected
+  entry) now deletes every entry in a Ctrl+click multi-selection
+  together, with one confirmation, when the target is part of one -
+  previously it only ever deleted the single entry, ignoring the rest
+  of the selection.
+- Added a welcome screen above the "Close Mini" button (the blank/
+  unnamed/unmodified last-tab state): a small block-letter "MINI"
+  banner and an "Open a file to start" subtitle, shown either way -
+  mouse mode or not, though only the button itself is actually
+  clickable. Degrades gracefully (button alone, no banner) on a
+  terminal too small to fit the whole block.
+
 ## 1.10.0 - 2026-09-16
 
 - Fixed a click in the code area or on a tab while in Insert mode
