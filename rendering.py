@@ -1241,10 +1241,24 @@ class RenderMixin:
         and `no_col_start`/`no_col_end` are each button's own 0-indexed
         display-column span within that row, for hit-testing and
         hover, the same idea as `_name_dialog_box_geometry`'s single
-        `close_col`."""
+        `close_col`.
+
+        Unlike the name dialog, `prompt` here isn't bounded by
+        anything Mini controls (it can list several dragged file
+        names) - `box_width` is clamped to `area_width` rather than
+        requiring the box to fully fit it, so a long prompt truncates
+        (`_render_confirm_box` already does this for its own text)
+        instead of silently drawing no box at all while `_confirm`
+        keeps blocking on `y`/`n`/`Esc` with nothing on screen to show
+        for it. Only genuinely too-narrow buttons (`area_width` itself
+        smaller than the Yes/No row) still return None outright -
+        nothing sensible to clamp to at that point."""
         yes_text, gap, no_text = "[ Yes ]", "   ", "[ No ]"
         buttons_text = yes_text + gap + no_text
-        box_width = max(len(prompt) + 4, len(buttons_text) + 4, 24)
+        min_width = len(buttons_text) + 4
+        box_width = min(
+            max(len(prompt) + 4, min_width, 24), max(area_width, min_width)
+        )
         box = self._centered_box_geometry(
             area_left, area_width, editor_rows, box_width, 4
         )
@@ -1384,6 +1398,7 @@ class RenderMixin:
                 self._hovered_tab_close = None
                 self._close_mini_hovered = False
                 self._hovered_worktree_delete = None
+                self._hovered_worktree_row = None
             elif kind == "MOUSE_RELEASE":
                 self._worktree_drag_origin = None
             return
@@ -1399,6 +1414,13 @@ class RenderMixin:
             self._hovered_worktree_delete = (
                 self._worktree_delete_hit_test(target[1], target[2])
                 if region == "sidebar" else None
+            )
+            hovered_entry = (
+                self._worktree_entry_at_row(target[1])
+                if region == "sidebar" else None
+            )
+            self._hovered_worktree_row = (
+                hovered_entry[0] if hovered_entry is not None else None
             )
             return
         if region == "sidebar_button":

@@ -457,7 +457,7 @@ class WorktreePanelMixin:
             plain_row = self._pad_sidebar(f"{indent}{label}")
             is_cursor = index == self.worktree_cursor
             # A Ctrl+click-toggled entry (see _handle_worktree_click)
-            # gets its own background, same idea as WORD_MATCH_COLOR
+            # gets its own background, same idea as WORD_MATCH_START
             # already highlighting other occurrences of a selected
             # word elsewhere - the cursor's own indicator still wins
             # if a row happens to be both.
@@ -465,20 +465,29 @@ class WorktreePanelMixin:
                 not is_cursor and path in self.worktree_selected_entries
             )
             if is_cursor:
-                base_color = theme.CURRENT_LINE_INDICATOR_COLOR
+                base_color, base_close = (
+                    theme.CURRENT_LINE_INDICATOR_COLOR, theme.COLOR_RESET
+                )
             elif is_multi_selected:
-                base_color = theme.WORD_MATCH_COLOR
+                # WORD_MATCH_START is a background color (unlike
+                # CURRENT_LINE_INDICATOR_COLOR, which is foreground) -
+                # it needs its own WORD_MATCH_END to close, since
+                # COLOR_RESET only ever resets foreground and would
+                # otherwise bleed the background into whatever comes
+                # after it.
+                base_color, base_close = (
+                    theme.WORD_MATCH_START, theme.WORD_MATCH_END
+                )
             else:
-                base_color = None
-            if (
-                theme.MOUSE_ENABLED
-                and index == self._hovered_worktree_delete
-            ):
+                base_color, base_close = None, theme.COLOR_RESET
+            if theme.MOUSE_ENABLED and path == self._hovered_worktree_row:
                 # Reserve the row's own last 2 display columns for a
                 # hover-only delete "×" - only drawn for the entry the
-                # mouse is actually over right now, so a row otherwise
-                # gives no visual hint it's even there (see
-                # bugs_conocidos.md: "al pasar el ratón por encima").
+                # mouse is currently over *anywhere on that row* (see
+                # bugs_conocidos.md: "al pasar el ratón por encima"),
+                # kept separate from the narrower hit-test
+                # `_worktree_delete_hit_test` still uses to decide
+                # whether a click actually landed on the "×" itself.
                 # Same before/hover-color/resume-color nesting
                 # `_tab_bar_line` already uses for a tab's own ×.
                 resume = base_color if base_color else theme.COLOR_RESET
@@ -489,7 +498,7 @@ class WorktreePanelMixin:
             else:
                 row_text = plain_row
             if base_color:
-                lines.append(f"{base_color}{row_text}{theme.COLOR_RESET}")
+                lines.append(f"{base_color}{row_text}{base_close}")
             else:
                 lines.append(row_text)
         while len(lines) < height - button_rows:

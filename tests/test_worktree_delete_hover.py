@@ -25,6 +25,7 @@ class FakePanel(WorktreePanelMixin):
         self.worktree_scroll = 0
         self._worktree_entries_cache = None
         self._hovered_worktree_delete = None
+        self._hovered_worktree_row = None
         self.worktree_selected_entries = set()
         self._hovered_worktree_button = None
 
@@ -53,17 +54,41 @@ def test_delete_cross_only_shown_on_the_hovered_row():
     theme.MOUSE_ENABLED = True
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
-        open(os.path.join(tmp, "b.txt"), "w", encoding="utf-8").close()
+        b_path = os.path.join(tmp, "b.txt")
+        open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._hovered_worktree_delete = 1
+        # The cross reveals for the whole row (any column), tracked by
+        # path (_hovered_worktree_row) - separate from the narrow
+        # click hit-test (_hovered_worktree_delete, unset here).
+        fake._hovered_worktree_row = b_path
         lines = [_strip_ansi(line) for line in fake._worktree_body_lines(10)]
         assert all(len(line) == WORKTREE_WIDTH for line in lines)
         assert "×" not in lines[1]
         assert "×" in lines[2]
 
 
+def test_hover_reveal_is_not_limited_to_the_edge_columns():
+    """Covers the actual bug report: the cross used to only reveal
+    itself once the mouse was already exactly where it would be
+    drawn. Hovering the row's own first column (far from the "×"
+    zone) must be enough to reveal it - only clicking still needs the
+    narrow zone (see test_hit_test_only_matches_last_two_columns...).
+    """
+    theme.MOUSE_ENABLED = True
+    with tempfile.TemporaryDirectory() as tmp:
+        a_path = os.path.join(tmp, "a.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        entry = fake._worktree_entry_at_row(1)
+        assert entry == (a_path, False)
+        fake._hovered_worktree_row = entry[0]
+        lines = [_strip_ansi(line) for line in fake._worktree_body_lines(10)]
+        assert "×" in lines[1]
+
+
 TESTS = [
     test_hit_test_only_matches_last_two_columns_of_a_real_entry_row,
     test_hit_test_disabled_without_mouse,
     test_delete_cross_only_shown_on_the_hovered_row,
+    test_hover_reveal_is_not_limited_to_the_edge_columns,
 ]

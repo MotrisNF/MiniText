@@ -7,6 +7,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import terminal  # noqa: E402
+import theme  # noqa: E402
 from worktree import WorktreePanelMixin  # noqa: E402
 
 
@@ -26,6 +27,9 @@ class FakePanel(WorktreePanelMixin):
         self.file_name = None
         self.lines = [""]
         self.modified = False
+        self._hovered_worktree_delete = None
+        self._hovered_worktree_row = None
+        self._hovered_worktree_button = None
 
 
 def _make_event(code, col, row, final="M"):
@@ -72,8 +76,26 @@ def test_plain_click_clears_the_multiselection():
         assert fake.worktree_selected_entries == set()
 
 
+def test_rendering_a_multiselected_row_does_not_crash():
+    """Regression test: rendering used to crash with AttributeError
+    (theme.WORD_MATCH_COLOR doesn't exist - only WORD_MATCH_START/END
+    do, since it's a background color) the moment a Ctrl+click
+    selection existed on a row that wasn't also the cursor."""
+    theme.MOUSE_ENABLED = True
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
+        b_path = os.path.join(tmp, "b.txt")
+        open(b_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake.worktree_selected_entries = {b_path}  # cursor stays on a.txt
+        lines = fake._worktree_body_lines(5)  # must not raise
+        assert lines[2].startswith(theme.WORD_MATCH_START)
+        assert lines[2].endswith(theme.WORD_MATCH_END)
+
+
 TESTS = [
     test_ctrl_bit_only_appended_to_press_events,
     test_ctrl_click_toggles_selection_without_moving_cursor,
     test_plain_click_clears_the_multiselection,
+    test_rendering_a_multiselected_row_does_not_crash,
 ]
