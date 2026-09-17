@@ -28,6 +28,7 @@ class FakePanel(WorktreePanelMixin):
         self._hovered_worktree_row = None
         self.worktree_selected_entries = set()
         self._hovered_worktree_button = None
+        self._worktree_drag_origin = None
 
 
 def test_hit_test_only_matches_last_two_columns_of_a_real_entry_row():
@@ -86,9 +87,27 @@ def test_hover_reveal_is_not_limited_to_the_edge_columns():
         assert "×" in lines[1]
 
 
+def test_hovered_row_gets_a_reverse_video_highlight():
+    """Covers bugs_conocidos.md: 'es necesario que se resalten
+    minimamente para dar feedback al usuario' - hovering a file (mouse
+    mode) now paints its row in reverse video, not just the delete ×.
+    """
+    theme.MOUSE_ENABLED = True
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
+        b_path = os.path.join(tmp, "b.txt")
+        open(b_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake._hovered_worktree_row = b_path
+        lines = fake._worktree_body_lines(10)
+        assert lines[2].startswith("\x1b[7m")
+        assert "\x1b[7m" not in lines[1]  # a.txt (the cursor) is untouched
+
+
 TESTS = [
     test_hit_test_only_matches_last_two_columns_of_a_real_entry_row,
     test_hit_test_disabled_without_mouse,
     test_delete_cross_only_shown_on_the_hovered_row,
     test_hover_reveal_is_not_limited_to_the_edge_columns,
+    test_hovered_row_gets_a_reverse_video_highlight,
 ]

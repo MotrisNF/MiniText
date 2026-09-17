@@ -116,6 +116,7 @@ class TextEditor(
         self._hovered_worktree_delete = None
         self._hovered_worktree_row = None
         self._worktree_drag_origin = None
+        self._worktree_drag_target = None
         self._name_dialog = None
         self._confirm_dialog = None
 

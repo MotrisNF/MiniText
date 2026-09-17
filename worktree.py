@@ -285,22 +285,29 @@ class WorktreePanelMixin:
     def _update_worktree_drag_status(self, panel_row):
         """Live feedback while dragging a worktree entry (mouse mode
         only, see `_handle_worktree_drop`) - a status-line preview of
-        where releasing right now would move it, updated on every
-        MOUSE_DRAG the mouse is still over the sidebar for. No-op with
-        nothing currently being dragged, or while hovering the
-        dragged entry's own row (dropping something on itself is
-        always a no-op, see `_handle_worktree_drop`)."""
+        where releasing right now would move it, plus `self.
+        _worktree_drag_target` (the row `_worktree_body_lines` paints
+        as the drop zone), both updated on every MOUSE_DRAG the mouse
+        is still over the sidebar for. No-op with nothing currently
+        being dragged, or while hovering the dragged entry's own row
+        (dropping something on itself is always a no-op, see
+        `_handle_worktree_drop`) - either way `_worktree_drag_target`
+        is cleared, so nothing stays highlighted as a bogus drop
+        zone."""
         if self._worktree_drag_origin is None:
             return
         entry = self._worktree_entry_at_row(panel_row)
         if entry is None or entry[0] == self._worktree_drag_origin:
+            self._worktree_drag_target = None
             return
         target_path, is_directory = entry
+        self._worktree_drag_target = target_path
         destination_dir = (
             target_path if is_directory else os.path.dirname(target_path)
         )
         label = os.path.basename(destination_dir) or destination_dir
-        self.status = f"Release to move into '{label}'"
+        origin_name = os.path.basename(self._worktree_drag_origin)
+        self.status = f"Moving '{origin_name}': release to move into '{label}'"
 
     def _handle_worktree_drop(self, panel_row):
         """Finishes a worktree drag started by a MOUSE_PRESS on some
@@ -317,6 +324,7 @@ class WorktreePanelMixin:
         "moving" something nowhere."""
         origin = self._worktree_drag_origin
         self._worktree_drag_origin = None
+        self._worktree_drag_target = None
         if origin is None:
             return
         entry = self._worktree_entry_at_row(panel_row)
@@ -484,6 +492,7 @@ class WorktreePanelMixin:
         ) or self.worktree_root
         lines = [self._pad_sidebar(f"Worktree: {root_label}")]
         last_visible = min(len(entries), self.worktree_scroll + list_height)
+        dragging = self._worktree_drag_origin is not None
         for index in range(self.worktree_scroll, last_visible):
             path, name, is_directory, depth = entries[index]
             indent = "  " * depth
@@ -497,28 +506,52 @@ class WorktreePanelMixin:
             # A Ctrl+click-toggled entry (see _handle_worktree_click)
             # gets its own background, same idea as WORD_MATCH_START
             # already highlighting other occurrences of a selected
-            # word elsewhere - the cursor's own indicator still wins
-            # if a row happens to be both.
-            is_multi_selected = (
-                not is_cursor and path in self.worktree_selected_entries
-            )
-            if is_cursor:
+            # word elsewhere. WORD_MATCH_START is a background color
+            # (unlike CURRENT_LINE_INDICATOR_COLOR, which is
+            # foreground), so when a row is both the cursor and part
+            # of the multi-selection both are applied together -
+            # otherwise Ctrl+clicking the cursor's own row gave no
+            # visible sign it had joined the selection at all.
+            is_multi_selected = path in self.worktree_selected_entries
+            if is_cursor and is_multi_selected:
+                base_color, base_close = (
+                    theme.WORD_MATCH_START + theme.CURRENT_LINE_INDICATOR_COLOR,
+                    theme.WORD_MATCH_END + theme.COLOR_RESET,
+                )
+            elif is_cursor:
                 base_color, base_close = (
                     theme.CURRENT_LINE_INDICATOR_COLOR, theme.COLOR_RESET
                 )
             elif is_multi_selected:
-                # WORD_MATCH_START is a background color (unlike
-                # CURRENT_LINE_INDICATOR_COLOR, which is foreground) -
-                # it needs its own WORD_MATCH_END to close, since
-                # COLOR_RESET only ever resets foreground and would
-                # otherwise bleed the background into whatever comes
-                # after it.
                 base_color, base_close = (
                     theme.WORD_MATCH_START, theme.WORD_MATCH_END
                 )
+            elif dragging and path == self._worktree_drag_target:
+                # Where a drag would land if released right now (see
+                # _update_worktree_drag_status) - reverse video, same
+                # as the editor's own text selection, rather than a
+                # theme color, so it reads as "drop zone" regardless
+                # of what the multi-select/cursor colors happen to be.
+                base_color, base_close = (
+                    theme.SELECTION_START, theme.SELECTION_END
+                )
+            elif (
+                theme.MOUSE_ENABLED and not dragging
+                and path == self._hovered_worktree_row
+            ):
+                # Bare mouse-over feedback (see bugs_conocidos.md: "es
+                # necesario que se resalten minimamente") - same
+                # reverse-video treatment as a drag's own drop-zone
+                # highlight above, just without a drag in progress.
+                base_color, base_close = (
+                    theme.SELECTION_START, theme.SELECTION_END
+                )
             else:
                 base_color, base_close = None, theme.COLOR_RESET
-            if theme.MOUSE_ENABLED and path == self._hovered_worktree_row:
+            if (
+                theme.MOUSE_ENABLED and not dragging
+                and path == self._hovered_worktree_row
+            ):
                 # Reserve the row's own last 2 display columns for a
                 # hover-only delete "×" - only drawn for the entry the
                 # mouse is currently over *anywhere on that row* (see
@@ -527,7 +560,10 @@ class WorktreePanelMixin:
                 # `_worktree_delete_hit_test` still uses to decide
                 # whether a click actually landed on the "×" itself.
                 # Same before/hover-color/resume-color nesting
-                # `_tab_bar_line` already uses for a tab's own ×.
+                # `_tab_bar_line` already uses for a tab's own ×. Not
+                # drawn mid-drag - _hovered_worktree_row only updates
+                # on MOUSE_MOVE, so it'd otherwise show a stale × over
+                # wherever the drag started.
                 resume = base_color if base_color else theme.COLOR_RESET
                 row_text = (
                     f"{plain_row[:-2]} {_DELETE_HOVER_COLOR}\x1b[1m×"

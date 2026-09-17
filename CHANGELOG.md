@@ -3,6 +3,33 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.11.1 - 2026-09-17
+
+- Fixed Ctrl+click-selecting the worktree entry that was already the
+  cursor showing no visible change at all - the multi-selection
+  background and the cursor's own foreground color are now combined
+  on that row instead of the cursor's indicator silently winning,
+  which used to make it look like the click hadn't registered.
+- Fixed the "Close Mini"/new-file-or-folder/confirm overlay boxes
+  leaving a stale border or row behind when one replaced another in
+  the same frame (e.g. "Close Mini" showing, then a new-file dialog
+  opening over it): the full-redraw check only compared *whether* some
+  box was showing, not *which* one, so a box-to-box transition never
+  triggered the clear that a shown-to-hidden transition already did.
+- Added a hover highlight (reverse video) to worktree rows as the
+  mouse passes over them - previously only the per-row delete "×" gave
+  any indication at all.
+- Added visual feedback while dragging a worktree entry: the row the
+  mouse is currently over is highlighted as the drop zone, and the
+  status line now names the file being dragged, not just the
+  destination.
+- Redrew the welcome banner from the original wide prototype
+  (`Banner.txt`, kept as-is) instead of the unrelated block-letter
+  "MINI" wordmark 1.11.0 introduced as a placeholder - the new banner
+  is a mechanical downscale (block-sampled, like an image resize) of
+  that same prototype into a size that actually fits a typical
+  terminal.
+
 ## 1.11.0 - 2026-09-16
 
 - Fixed a crash (`AttributeError: module 'theme' has no attribute

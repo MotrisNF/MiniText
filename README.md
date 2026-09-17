@@ -547,18 +547,23 @@ enabled:
   is the one exception: a single click on it, once the panel is
   already focused, expands/collapses it right away - no second click
   needed, there's no real "open" step to hold back the way there is
-  for a file. Hovering an entry reveals a "×" at the right edge of its
+  for a file. Hovering any entry highlights its row in reverse video
+  (a minimal "you're pointing at this one" cue, separate from the
+  cursor's own indicator) and reveals a "×" at the right edge of its
   row; clicking it asks for confirmation the same way `Delete` already
   does. `Ctrl`+click toggles that one entry in/out of a
-  multi-selection (shown with its own background color), independent
-  of the normal single-entry selection - a plain click always clears
-  it first. Dragging an entry - or a whole `Ctrl`+click selection
-  together, if the one being dragged is part of one - onto a directory
-  moves it inside, after confirming; dragging it onto a file moves it
-  to that file's own parent directory instead; dropping an entry on
-  itself (a plain click-and-release with no real drag included) is
-  always a silent no-op. The scroll wheel moves the selection up/down
-  a few entries. Two buttons along the bottom of the panel -
+  multi-selection (shown with its own background color, combined with
+  the cursor's own color if the two ever land on the same row),
+  independent of the normal single-entry selection - a plain click
+  always clears it first. Dragging an entry - or a whole `Ctrl`+click
+  selection together, if the one being dragged is part of one - names
+  it in the status line and highlights whichever row the mouse is
+  currently over as the drop zone; releasing onto a directory moves it
+  inside, after confirming; releasing onto a file moves it to that
+  file's own parent directory instead; dropping an entry on itself (a
+  plain click-and-release with no real drag included) is always a
+  silent no-op. The scroll wheel moves the selection up/down a few
+  entries. Two buttons along the bottom of the panel -
   `+ New file`, `+ New folder` - are clickable directly too, and
   highlight as the mouse passes over them (see "Worktree panel").
 - Scrolling over the `:run`/`:lint`/`:cmd` output panel scrolls it,

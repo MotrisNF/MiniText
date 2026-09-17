@@ -35,17 +35,24 @@ DOUBLE_CLICK_SECONDS = 0.4
 # subject to a terminal's own 256-color palette remapping either.
 _CLOSE_HOVER_COLOR = "\x1b[91m"
 
-# The welcome screen's own banner (a blocky "MINI" wordmark) and
-# subtitle - shown above the "Close Mini" button on the blank/unnamed/
-# unmodified last-tab screen, mouse enabled or not (see
-# bugs_conocidos.md: adapted from a wider prototype in Banner.txt into
-# something that actually fits a typical terminal).
+# The welcome screen's own banner - shown above the "Close Mini"
+# button on the blank/unnamed/unmodified last-tab screen, mouse
+# enabled or not. Mechanically downscaled from the original 133x12
+# (trimmed) prototype in Banner.txt down to a 79x8 box - each output
+# cell is the most common non-space character across the block of the
+# original art it maps to (left blank below a 25% density threshold) -
+# so it's a faithful shrink of that same artwork rather than a
+# hand-redrawn replacement (see bugs_conocidos.md; Banner.txt itself
+# is kept untouched as the original).
 _BANNER_LINES = (
-    "█   █  ███  █   █  ███",
-    "██ ██   █   ██  █   █ ",
-    "█ █ █   █   █ █ █   █ ",
-    "█   █   █   █  ██   █ ",
-    "█   █  ███  █   █  ███",
+    "    %                                                                   #%",
+    "   %%%  %%%%  %%%%           %%%%  %%%%%%%%%%%%%%%                      #%#",
+    "   %%%. .%%%                     %%%%   %%%                           %%%%%%%%%",
+    "  %%%%%%%%%%        %% %%%%             %%%       %%%%%%-   %%%   %%% %%%%%",
+    "  %% %%%% %%   =%   %%%%+%%   %%        %%%      %%%  :%:    :%%%%%      %%",
+    "=%%    %# %%    %%  %%%%  %.  %%.       %%%      %%%%%%%     %%%%%       %%  %%",
+    "%%=       -%#   %%  %%    :%  %%#       %%%      %%%       %%%% %%%%     %%  %%",
+    " %         %%%  %+         %  %%        %%%       %%%%%%%%+%%%    %%     %%%%%",
 )
 _WELCOME_SUBTITLE = "Open a file to start"
 
@@ -801,18 +808,30 @@ class RenderMixin:
         # (a full-screen \x1b[2J plus every visible row resent) with
         # nothing extra to show for it - that was the real source of
         # the lag typing into this dialog used to have.
-        overlay_box_shown = (
-            close_box is not None or name_dialog_box is not None
-            or confirm_box is not None
+        # Identifies not just *whether* an overlay box is showing but
+        # which one, and at what geometry - a plain True/False here
+        # used to treat "Close Mini" -> name dialog (or any other
+        # box-to-box transition) as no change at all, since both sides
+        # were simply "True", so the old box's footprint never got
+        # cleared and left a stale border/silhouette behind.
+        overlay_box_identity = (
+            ("close", close_box["left"], close_box["width"],
+             close_box["top_row_offset"]) if close_box is not None else
+            ("name", name_dialog_box["left"], name_dialog_box["width"],
+             name_dialog_box["top_row_offset"])
+            if name_dialog_box is not None else
+            ("confirm", confirm_box["left"], confirm_box["width"],
+             confirm_box["top_row_offset"]) if confirm_box is not None
+            else None
         )
         full_redraw = (
             self._force_full_redraw
             or (terminal_width, terminal_height) != self._last_terminal_size
             or dropdown_will_show or self._dropdown_was_shown
-            or overlay_box_shown != self._overlay_box_was_shown
+            or overlay_box_identity != self._overlay_box_was_shown
         )
         self._dropdown_was_shown = dropdown_will_show
-        self._overlay_box_was_shown = overlay_box_shown
+        self._overlay_box_was_shown = overlay_box_identity
         self._last_terminal_size = (terminal_width, terminal_height)
         self._force_full_redraw = False
 
@@ -1468,8 +1487,11 @@ class RenderMixin:
                 self._close_mini_hovered = False
                 self._hovered_worktree_delete = None
                 self._hovered_worktree_row = None
+            elif kind == "MOUSE_DRAG":
+                self._worktree_drag_target = None
             elif kind == "MOUSE_RELEASE":
                 self._worktree_drag_origin = None
+                self._worktree_drag_target = None
             return
         region = target[0]
         if kind == "MOUSE_MOVE":

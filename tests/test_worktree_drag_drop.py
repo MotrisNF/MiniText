@@ -86,9 +86,30 @@ def test_dropping_a_multiselection_moves_every_selected_entry():
         assert fake.worktree_selected_entries == set()
 
 
+def test_dragging_over_a_target_sets_status_and_drag_target():
+    """Covers bugs_conocidos.md: 'El desplazar un archivo ... no da
+    ningun tipo de feedback' - dragging now names the file being moved
+    in the status line and marks the hovered row as the drop zone
+    (_worktree_drag_target, used by _worktree_body_lines to highlight
+    it)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.mkdir(os.path.join(tmp, "sub"))
+        a_path = os.path.join(tmp, "a.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake._worktree_drag_origin = a_path
+        fake._update_worktree_drag_status(fake._row_for("sub"))
+        assert "a.txt" in fake.status
+        assert "sub" in fake.status
+        assert fake._worktree_drag_target == os.path.join(tmp, "sub")
+        fake._update_worktree_drag_status(fake._row_for("a.txt"))
+        assert fake._worktree_drag_target is None  # hovering the origin itself
+
+
 TESTS = [
     test_drop_on_directory_moves_inside_it,
     test_drop_on_a_file_moves_to_its_parent_directory,
     test_dropping_an_entry_on_itself_is_a_silent_no_op,
     test_dropping_a_multiselection_moves_every_selected_entry,
+    test_dragging_over_a_target_sets_status_and_drag_target,
 ]

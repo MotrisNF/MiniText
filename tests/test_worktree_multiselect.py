@@ -30,6 +30,7 @@ class FakePanel(WorktreePanelMixin):
         self._hovered_worktree_delete = None
         self._hovered_worktree_row = None
         self._hovered_worktree_button = None
+        self._worktree_drag_origin = None
 
 
 def _make_event(code, col, row, final="M"):
@@ -110,10 +111,27 @@ def test_rendering_a_multiselected_row_does_not_crash():
         assert lines[2].endswith(theme.WORD_MATCH_END)
 
 
+def test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too():
+    """Covers bugs_conocidos.md: 'El archivo que esta resaltado no se
+    selecciona' - Ctrl+clicking the cursor's own row used to leave the
+    row looking exactly like a plain cursor, with no visible sign the
+    Ctrl+click had actually registered."""
+    theme.MOUSE_ENABLED = True
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        a_path = os.path.join(tmp, "a.txt")
+        fake.worktree_selected_entries = {a_path}  # cursor is also a.txt
+        lines = fake._worktree_body_lines(5)
+        assert theme.WORD_MATCH_START in lines[1]
+        assert theme.CURRENT_LINE_INDICATOR_COLOR in lines[1]
+
+
 TESTS = [
     test_ctrl_bit_only_appended_to_press_events,
     test_ctrl_click_toggles_selection_without_moving_cursor,
     test_plain_click_on_an_unselected_entry_clears_the_multiselection,
     test_plain_click_on_an_already_selected_entry_preserves_it,
     test_rendering_a_multiselected_row_does_not_crash,
+    test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too,
 ]

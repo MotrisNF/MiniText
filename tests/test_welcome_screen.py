@@ -19,11 +19,11 @@ class FakeRenderer(RenderMixin):
 def test_geometry_stacks_banner_above_the_close_button():
     fake = FakeRenderer()
     close_box = fake._centered_box_geometry(
-        area_left=0, area_width=60, editor_rows=20, box_width=14,
+        area_left=0, area_width=90, editor_rows=30, box_width=14,
         box_height=3,
     )
     assert close_box is not None
-    banner = fake._welcome_banner_geometry(close_box, 0, 60)
+    banner = fake._welcome_banner_geometry(close_box, 0, 90)
     assert banner is not None
     banner_bottom = (
         banner["banner_top_row_offset"] + len(_BANNER_LINES) - 1
@@ -43,10 +43,10 @@ def test_geometry_is_none_without_enough_height_above_the_button():
 def test_render_positions_every_line_and_the_subtitle():
     fake = FakeRenderer()
     close_box = fake._centered_box_geometry(
-        area_left=0, area_width=60, editor_rows=20, box_width=14,
+        area_left=0, area_width=90, editor_rows=30, box_width=14,
         box_height=3,
     )
-    banner = fake._welcome_banner_geometry(close_box, 0, 60)
+    banner = fake._welcome_banner_geometry(close_box, 0, 90)
     lines = fake._render_welcome_banner(banner)
     assert len(lines) == len(_BANNER_LINES) + 1
     stripped_last = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", lines[-1])
