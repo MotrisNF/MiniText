@@ -80,7 +80,7 @@ class WorktreePanelMixin:
         path, _, is_directory, _ = entries[self.worktree_cursor]
         if is_directory and path not in self.worktree_expanded:
             self.worktree_expanded.add(path)
-            self.worktree_selected_dir = path
+            self.worktree_new_entry_dir = path
             self._invalidate_worktree_cache()
 
     def _worktree_collapse(self, entries):
@@ -89,7 +89,7 @@ class WorktreePanelMixin:
         path, _, is_directory, _ = entries[self.worktree_cursor]
         if is_directory and path in self.worktree_expanded:
             self.worktree_expanded.discard(path)
-            self.worktree_selected_dir = os.path.dirname(path)
+            self.worktree_new_entry_dir = os.path.dirname(path)
             self._invalidate_worktree_cache()
 
     def _worktree_activate(self, entries):
@@ -121,7 +121,7 @@ class WorktreePanelMixin:
         if not name:
             self.status = "Cancelled"
             return
-        new_path = os.path.join(self.worktree_selected_dir, name)
+        new_path = os.path.join(self.worktree_new_entry_dir, name)
         try:
             if is_directory:
                 os.mkdir(new_path)
@@ -204,6 +204,23 @@ class WorktreePanelMixin:
             return False
         return kind == "MOUSE_PRESS" and on_close
 
+    def _confirm_batch_op(self, single_prompt, multi_prompt, names):
+        """Shared confirm step for `_worktree_delete`/`_handle_
+        worktree_drop`: a single-item op is confirmed with
+        `single_prompt` as-is; more than one gets `multi_prompt`
+        (already carrying the count) plus the item names as their own
+        scrollable list (see commands.py's `_confirm`) instead of
+        folded into the prompt text itself. Sets "Cancelled" on
+        self.status - the one part of a decline both callers do
+        identically - if the user says no."""
+        if len(names) > 1:
+            confirmed = self._confirm(multi_prompt, names)
+        else:
+            confirmed = self._confirm(single_prompt)
+        if not confirmed:
+            self.status = "Cancelled"
+        return confirmed
+
     def _worktree_delete(self, entries, index=None):
         """Deletes the entry at `index` (`self.worktree_cursor` if not
         given) after confirming - or, if that entry is part of a
@@ -223,16 +240,11 @@ class WorktreePanelMixin:
             ]
         else:
             targets = [(path, name, is_directory, None)]
-        if len(targets) > 1:
-            names = [target[1] for target in targets]
-            prompt = f"Delete {len(targets)} items? (y/n)"
-            confirmed = self._confirm(prompt, names)
-        else:
-            kind = "folder" if targets[0][2] else "file"
-            prompt = f"Delete {kind} '{targets[0][1]}'? (y/n)"
-            confirmed = self._confirm(prompt)
-        if not confirmed:
-            self.status = "Cancelled"
+        names = [target[1] for target in targets]
+        kind = "folder" if targets[0][2] else "file"
+        single_prompt = f"Delete {kind} '{names[0]}'? (y/n)"
+        multi_prompt = f"Delete {len(targets)} items? (y/n)"
+        if not self._confirm_batch_op(single_prompt, multi_prompt, names):
             return
         deleted, errors = [], []
         for target_path, target_name, target_is_directory, _ in targets:
@@ -269,17 +281,29 @@ class WorktreePanelMixin:
         path as pressing `Delete` on the selected one."""
         self._worktree_delete(self._worktree_entries(), index)
 
-    def _worktree_entry_at_row(self, panel_row):
-        """The (path, is_directory) of the real entry at `panel_row`
-        (0-indexed from the panel's own top, header included - same
-        convention as `_handle_worktree_click`), or None if that row
-        isn't a real entry (the header, a blank filler row past the
-        last one, or a button row)."""
-        entries = self._worktree_entries()
+    def _worktree_row_index(self, panel_row, entries):
+        """The `entries` index `panel_row` (0-indexed from the
+        panel's own top, header included) resolves to, or None if it
+        isn't a real entry row at all (the header, a blank filler row
+        past the last one, or a button row) - the one bounds check
+        every mouse-driven worktree interaction (click, hover, drag,
+        delete-×) needs before turning a screen row into a real
+        entry."""
         if panel_row <= 0 or not entries:
             return None
         entry_index = self.worktree_scroll + (panel_row - 1)
         if entry_index >= len(entries):
+            return None
+        return entry_index
+
+    def _worktree_entry_at_row(self, panel_row):
+        """The (path, is_directory) of the real entry at `panel_row`
+        (0-indexed from the panel's own top, header included - same
+        convention as `_handle_worktree_click`), or None if that row
+        isn't a real entry."""
+        entries = self._worktree_entries()
+        entry_index = self._worktree_row_index(panel_row, entries)
+        if entry_index is None:
             return None
         path, _, is_directory, _ = entries[entry_index]
         return path, is_directory
@@ -364,16 +388,11 @@ class WorktreePanelMixin:
         destination_label = (
             os.path.basename(destination_dir) or destination_dir
         )
-        if len(names) > 1:
-            prompt = (
-                f"Move {len(names)} items to '{destination_label}'? (y/n)"
-            )
-            confirmed = self._confirm(prompt, names)
-        else:
-            prompt = f"Move {names[0]} to '{destination_label}'? (y/n)"
-            confirmed = self._confirm(prompt)
-        if not confirmed:
-            self.status = "Cancelled"
+        single_prompt = f"Move {names[0]} to '{destination_label}'? (y/n)"
+        multi_prompt = (
+            f"Move {len(names)} items to '{destination_label}'? (y/n)"
+        )
+        if not self._confirm_batch_op(single_prompt, multi_prompt, names):
             return
         moved, errors = [], []
         for source in sources:
@@ -398,18 +417,12 @@ class WorktreePanelMixin:
         falls on that row's own hover "×" (the last 2 display columns
         of the panel, mouse mode only - see `_worktree_body_lines`);
         None everywhere else, including a blank filler or button row
-        past the real entries - same bounds check `_handle_worktree_
-        click` already trusts for turning a panel row into an entry
-        index."""
-        if not theme.MOUSE_ENABLED or row_offset <= 0:
+        past the real entries."""
+        if not theme.MOUSE_ENABLED:
             return None
         if not (WORKTREE_WIDTH - 2 <= column0 < WORKTREE_WIDTH):
             return None
-        entries = self._worktree_entries()
-        entry_index = self.worktree_scroll + (row_offset - 1)
-        if entry_index >= len(entries):
-            return None
-        return entry_index
+        return self._worktree_row_index(row_offset, self._worktree_entries())
 
     def _handle_worktree_click(self, panel_row, ctrl_held=False):
         """A mouse click at `panel_row` (0-indexed from the top of the
@@ -445,10 +458,8 @@ class WorktreePanelMixin:
         if newly_focused:
             self._invalidate_worktree_cache()
         entries = self._worktree_entries()
-        if panel_row <= 0 or not entries:
-            return
-        entry_index = self.worktree_scroll + (panel_row - 1)
-        if entry_index >= len(entries):
+        entry_index = self._worktree_row_index(panel_row, entries)
+        if entry_index is None:
             return
         path, _, is_directory, _ = entries[entry_index]
         if ctrl_held:
@@ -499,6 +510,47 @@ class WorktreePanelMixin:
     def _pad_sidebar(text):
         return text[:WORKTREE_WIDTH].ljust(WORKTREE_WIDTH)
 
+    def _worktree_row_style(self, path, index, dragging):
+        """The (base_color, base_close) pair `_worktree_body_lines`
+        wraps one row in, picked from cursor/multi-selection/drag-
+        target/hover state in that priority order. A Ctrl+click-
+        toggled entry (see `_handle_worktree_click`) gets its own
+        background, same idea as WORD_MATCH_START already
+        highlighting other occurrences of a selected word elsewhere.
+        WORD_MATCH_START is a background color (unlike CURRENT_LINE_
+        INDICATOR_COLOR, which is foreground), so when a row is both
+        the cursor and part of the multi-selection both are applied
+        together - otherwise Ctrl+clicking the cursor's own row gave
+        no visible sign it had joined the selection at all."""
+        is_cursor = index == self.worktree_cursor
+        is_multi_selected = path in self.worktree_selected_entries
+        if is_cursor and is_multi_selected:
+            return (
+                theme.WORD_MATCH_START + theme.CURRENT_LINE_INDICATOR_COLOR,
+                theme.WORD_MATCH_END + theme.COLOR_RESET,
+            )
+        if is_cursor:
+            return theme.CURRENT_LINE_INDICATOR_COLOR, theme.COLOR_RESET
+        if is_multi_selected:
+            return theme.WORD_MATCH_START, theme.WORD_MATCH_END
+        if dragging and path == self._worktree_drag_target:
+            # Where a drag would land if released right now (see
+            # _update_worktree_drag_status) - reverse video, same as
+            # the editor's own text selection, rather than a theme
+            # color, so it reads as "drop zone" regardless of what
+            # the multi-select/cursor colors happen to be.
+            return theme.SELECTION_START, theme.SELECTION_END
+        if (
+            not dragging and theme.MOUSE_ENABLED
+            and path == self._hovered_worktree_row
+        ):
+            # Bare mouse-over feedback (see bugs_conocidos.md: "es
+            # necesario que se resalten minimamente") - same reverse-
+            # video treatment as a drag's own drop-zone highlight
+            # above, just without a drag in progress.
+            return theme.SELECTION_START, theme.SELECTION_END
+        return None, theme.COLOR_RESET
+
     def _worktree_body_lines(self, height):
         entries = self._worktree_entries()
         self.worktree_cursor = max(
@@ -527,57 +579,14 @@ class WorktreePanelMixin:
             else:
                 label = f"  {name}"
             plain_row = self._pad_sidebar(f"{indent}{label}")
-            is_cursor = index == self.worktree_cursor
-            # A Ctrl+click-toggled entry (see _handle_worktree_click)
-            # gets its own background, same idea as WORD_MATCH_START
-            # already highlighting other occurrences of a selected
-            # word elsewhere. WORD_MATCH_START is a background color
-            # (unlike CURRENT_LINE_INDICATOR_COLOR, which is
-            # foreground), so when a row is both the cursor and part
-            # of the multi-selection both are applied together -
-            # otherwise Ctrl+clicking the cursor's own row gave no
-            # visible sign it had joined the selection at all.
-            is_multi_selected = path in self.worktree_selected_entries
-            if is_cursor and is_multi_selected:
-                base_color, base_close = (
-                    theme.WORD_MATCH_START
-                    + theme.CURRENT_LINE_INDICATOR_COLOR,
-                    theme.WORD_MATCH_END + theme.COLOR_RESET,
-                )
-            elif is_cursor:
-                base_color, base_close = (
-                    theme.CURRENT_LINE_INDICATOR_COLOR, theme.COLOR_RESET
-                )
-            elif is_multi_selected:
-                base_color, base_close = (
-                    theme.WORD_MATCH_START, theme.WORD_MATCH_END
-                )
-            elif dragging and path == self._worktree_drag_target:
-                # Where a drag would land if released right now (see
-                # _update_worktree_drag_status) - reverse video, same
-                # as the editor's own text selection, rather than a
-                # theme color, so it reads as "drop zone" regardless
-                # of what the multi-select/cursor colors happen to be.
-                base_color, base_close = (
-                    theme.SELECTION_START, theme.SELECTION_END
-                )
-            elif (
+            base_color, base_close = self._worktree_row_style(
+                path, index, dragging
+            )
+            is_hovered = (
                 theme.MOUSE_ENABLED and not dragging
                 and path == self._hovered_worktree_row
-            ):
-                # Bare mouse-over feedback (see bugs_conocidos.md: "es
-                # necesario que se resalten minimamente") - same
-                # reverse-video treatment as a drag's own drop-zone
-                # highlight above, just without a drag in progress.
-                base_color, base_close = (
-                    theme.SELECTION_START, theme.SELECTION_END
-                )
-            else:
-                base_color, base_close = None, theme.COLOR_RESET
-            if (
-                theme.MOUSE_ENABLED and not dragging
-                and path == self._hovered_worktree_row
-            ):
+            )
+            if is_hovered:
                 # Reserve the row's own last 2 display columns for a
                 # hover-only delete "×" - only drawn for the entry the
                 # mouse is currently over *anywhere on that row* (see

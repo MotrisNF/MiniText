@@ -136,7 +136,7 @@ class CommandMixin:
             self._save_all_tabs()
             self.running = False
 
-    def _read_command_line(self, label="File name"):
+    def _read_command_line(self):
         value = ""
         while True:
             key = terminal.read_key()
@@ -148,7 +148,7 @@ class CommandMixin:
                 return ""
             elif len(key) == 1 and key.isprintable():
                 value += key
-            self.status = f"{label}: {value}"
+            self.status = f"File name: {value}"
             self._render()
 
     def _confirm(self, prompt, items=None):
@@ -268,14 +268,19 @@ class CommandMixin:
         return name, argument
 
     def _line_index_from_argument(self, argument):
+        """`_jump_to_line`/`_delete_line`/`_copy_line`/`_paste_before_
+        line`'s shared guard: the 0-indexed line `argument` (the
+        1-indexed number typed after the command) names, or None -
+        after setting the "No line N" status, so every caller can
+        just check for it - if it's out of range."""
         if argument is None or not 1 <= argument <= len(self.lines):
+            self.status = f"No line {argument}"
             return None
         return argument - 1
 
     def _jump_to_line(self, argument):
         line_index = self._line_index_from_argument(argument)
         if line_index is None:
-            self.status = f"No line {argument}"
             return
         self.line = line_index
         self.column = min(self.column, len(self.lines[self.line]))
@@ -285,7 +290,6 @@ class CommandMixin:
     def _delete_line(self, argument):
         line_index = self._line_index_from_argument(argument)
         if line_index is None:
-            self.status = f"No line {argument}"
             return
         self._snapshot()
         del self.lines[line_index]
@@ -308,7 +312,6 @@ class CommandMixin:
     def _copy_line(self, argument):
         line_index = self._line_index_from_argument(argument)
         if line_index is None:
-            self.status = f"No line {argument}"
             return
         self.clipboard = self.lines[line_index]
         self.status = f"Copied line {argument}"
@@ -327,7 +330,6 @@ class CommandMixin:
             return
         line_index = self._line_index_from_argument(argument)
         if line_index is None:
-            self.status = f"No line {argument}"
             return
         self._snapshot()
         new_lines = self.clipboard.split("\n")

@@ -99,25 +99,32 @@ class BufferEditMixin:
         self.redo_stack.clear()
         self.modified = True
 
-    def _undo(self):
-        if not self.undo_stack:
-            self.status = "Nothing to undo"
+    def _swap_history(
+        self, source_stack, dest_stack, empty_status, done_status
+    ):
+        """Shared core of `_undo`/`_redo`: they're mirror images of
+        each other (which stack is the source and which is the
+        destination is the only real difference), so this is the one
+        place that snapshots the current state onto `dest_stack`
+        before restoring the top of `source_stack`."""
+        if not source_stack:
+            self.status = empty_status
             return
-        self.redo_stack.append((list(self.lines), self.line, self.column))
-        self.lines, self.line, self.column = self.undo_stack.pop()
+        dest_stack.append((list(self.lines), self.line, self.column))
+        self.lines, self.line, self.column = source_stack.pop()
         self.selection_anchor = None
         self.modified = True
-        self.status = "Undone"
+        self.status = done_status
+
+    def _undo(self):
+        self._swap_history(
+            self.undo_stack, self.redo_stack, "Nothing to undo", "Undone"
+        )
 
     def _redo(self):
-        if not self.redo_stack:
-            self.status = "Nothing to redo"
-            return
-        self.undo_stack.append((list(self.lines), self.line, self.column))
-        self.lines, self.line, self.column = self.redo_stack.pop()
-        self.selection_anchor = None
-        self.modified = True
-        self.status = "Redone"
+        self._swap_history(
+            self.redo_stack, self.undo_stack, "Nothing to redo", "Redone"
+        )
 
     def _update_selection(self, key):
         extending = self.mode == "visual" and key.startswith("CTRL-")

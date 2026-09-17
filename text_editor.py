@@ -1,8 +1,9 @@
 """Mini's TextEditor: composes the mixins in autocomplete.py,
-commands.py, editing.py, rendering.py, run_panel.py, tabs.py, and
-worktree.py into one class, owns the top-level state they all share
-(cursor, buffers, tabs, panels, ...), and runs the main key-reading
-loop that routes a keypress to whichever of them handles it."""
+commands.py, dialogs.py, editing.py, mouse.py, rendering.py,
+run_panel.py, tabs.py, and worktree.py into one class, owns the
+top-level state they all share (cursor, buffers, tabs, panels, ...),
+and runs the main key-reading loop that routes a keypress to whichever
+of them handles it."""
 
 import os
 import signal
@@ -11,12 +12,14 @@ from collections import deque
 
 import terminal
 import updater
-from autocomplete import SuggestionMixin
+from autocomplete import SuggestionCaches, SuggestionMixin
 from commands import CommandMixin
+from dialogs import DialogMixin
 from editing import (
     BufferEditMixin, STATUS_TIMEOUT_SECONDS, UNDO_HISTORY_LIMIT,
     _indent_unit,
 )
+from mouse import MouseMixin
 from rendering import RenderMixin
 from run_panel import RunPanelMixin
 from tabs import TabsMixin
@@ -34,8 +37,8 @@ MOVEMENT_KEYS = {
 
 
 class TextEditor(
-    TabsMixin, RenderMixin, BufferEditMixin, SuggestionMixin,
-    WorktreePanelMixin, RunPanelMixin, CommandMixin,
+    TabsMixin, RenderMixin, DialogMixin, MouseMixin, BufferEditMixin,
+    SuggestionMixin, WorktreePanelMixin, RunPanelMixin, CommandMixin,
 ):
     def __init__(self, file_name=None):
         self.file_name = file_name
@@ -69,7 +72,7 @@ class TextEditor(
         self.worktree_show_hidden = False
         self.worktree_cursor = 0
         self.worktree_scroll = 0
-        self.worktree_selected_dir = self.worktree_root
+        self.worktree_new_entry_dir = self.worktree_root
         self.tabs = [self._current_buffer_state()]
         self.active_tab = 0
         self.run_process = None
@@ -96,23 +99,14 @@ class TextEditor(
         self.suggestion_matches = []
         self.suggestion_index = 0
         self._suggestion_dismissed_at = None
-        self._import_members_cache = {}
-        self._import_broken_cache = {}
-        self._jedi_attribute_cache = {}
+        self._suggestion_caches = SuggestionCaches()
         self._elastic_width_cache = {}
         self._mouse_layout = None
-        self._line_word_cache = {}
-        self._word_pool_static = frozenset()
-        self._word_pool_static_sorted = []
-        self._included_header_words_sorted = []
-        self._word_pool_lines_ref = None
-        self._word_pool_line_count = -1
-        self._word_pool_line_index = -1
         self._worktree_entries_cache = None
         self._last_click = None
         self._hovered_worktree_button = None
         self._hovered_tab_close = None
-        self._close_mini_hovered = False
+        self._hovered_close_mini = False
         self._hovered_worktree_delete = None
         self._hovered_worktree_row = None
         self._worktree_drag_origin = None
@@ -425,7 +419,7 @@ def edit_file(file_name=None, worktree_root=None):
     editor = TextEditor(file_name)
     if worktree_root is not None:
         editor.worktree_root = os.path.abspath(worktree_root)
-        editor.worktree_selected_dir = editor.worktree_root
+        editor.worktree_new_entry_dir = editor.worktree_root
         editor.worktree_visible = True
         editor.worktree_focused = True
     editor.run()

@@ -103,6 +103,25 @@ def _pushback_byte(byte):
     _pending_byte = byte
 
 
+def _utf8_sequence_length(lead_byte):
+    """How many bytes total the UTF-8 codepoint starting with
+    `lead_byte` spans, so `read_key` can read the rest of it before
+    decoding - decoding a lead byte alone (the previous behavior)
+    always failed with `errors="ignore"`, silently dropping every
+    accented/non-ASCII character typed (a lone continuation byte, or
+    an invalid lead byte, gets 1 here so decode() is left to reject it
+    on its own rather than over-reading)."""
+    if lead_byte < 0x80:
+        return 1
+    if lead_byte & 0xE0 == 0xC0:
+        return 2
+    if lead_byte & 0xF0 == 0xE0:
+        return 3
+    if lead_byte & 0xF8 == 0xF0:
+        return 4
+    return 1
+
+
 def read_key(timeout=None):
     """The next key/event - blocking indefinitely if `timeout` is
     None (the default), or returning "IDLE_TIMEOUT" if `timeout`
@@ -144,7 +163,13 @@ def read_key(timeout=None):
     if not first_byte:
         return "EOF"
 
-    key = first_byte.decode("utf-8", errors="ignore")
+    raw = first_byte
+    while len(raw) < _utf8_sequence_length(raw[0]):
+        next_byte = _read_stdin_byte(stdin_fd)
+        if not next_byte:
+            break
+        raw += next_byte
+    key = raw.decode("utf-8", errors="ignore")
     if key != ESC:
         return key
 

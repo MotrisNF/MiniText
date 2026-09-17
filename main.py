@@ -4,6 +4,7 @@ from sys import argv
 
 import theme
 import updater
+from terminal import raw_terminal, read_key
 from text_editor import edit_file
 
 _CLI_HELP_LINES = (
@@ -51,21 +52,37 @@ def _read_version():
         return "unknown"
 
 
-def _show_cli_help():
-    from terminal import raw_terminal, read_key
+def _print_cli_help():
+    sys.stdout.write("\r\n".join(_CLI_HELP_LINES) + "\r\n")
+    sys.stdout.flush()
 
+
+def _wait_for_quit_key():
+    while read_key() != "q":
+        pass
+
+
+def _show_cli_help():
     with raw_terminal():
-        sys.stdout.write("\r\n".join(_CLI_HELP_LINES) + "\r\n")
-        sys.stdout.flush()
-        while read_key() != "q":
-            pass
+        _print_cli_help()
+        _wait_for_quit_key()
+
+
+def _edit_with_update_check(*args, **kwargs):
+    """Case 1 (no arguments) and the plain `mini <path>` case both
+    actually start the editor - unlike every other case here, which
+    either never touches the network (--version, --config, ...) or
+    already runs its own update check with different pre/post steps
+    (--update) - so this is the one spot that check needs to happen,
+    shared instead of duplicated at each of those two call sites."""
+    updater.check_for_updates_on_open()
+    edit_file(*args, **kwargs)
 
 
 if __name__ == "__main__":
     match len(argv):
         case 1:
-            updater.check_for_updates_on_open()
-            edit_file()
+            _edit_with_update_check()
 
         case 2 if argv[1] == "--update":
             updater.run_update_command()
@@ -86,12 +103,11 @@ if __name__ == "__main__":
             print(f"'{argv[1]}' is not a valid command. Use 'mini --help'.")
 
         case 2:
-            updater.check_for_updates_on_open()
             try:
                 if os.path.isdir(argv[1]):
-                    edit_file(worktree_root=argv[1])
+                    _edit_with_update_check(worktree_root=argv[1])
                 else:
-                    edit_file(argv[1])
+                    _edit_with_update_check(argv[1])
             except OSError as e:
                 print(f"'mini' cannot open the file '{argv[1]}': {e}")
 

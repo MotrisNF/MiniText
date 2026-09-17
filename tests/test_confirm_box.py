@@ -8,8 +8,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from commands import CommandMixin  # noqa: E402
-from rendering import (  # noqa: E402
-    RenderMixin, _CONFIRM_MAX_VISIBLE_ITEMS,
+from dialogs import (  # noqa: E402
+    DialogMixin, _CONFIRM_MAX_VISIBLE_ITEMS,
 )
 
 
@@ -17,7 +17,7 @@ def _strip_ansi(text):
     return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
 
 
-class FakeRenderer(RenderMixin):
+class FakeRenderer(DialogMixin):
     pass
 
 
@@ -275,6 +275,59 @@ def test_wheel_without_items_never_touches_scroll():
     assert fake._confirm_dialog.get("scroll") is None
 
 
+def test_closing_confirm_box_over_the_welcome_screen_forces_a_full_redraw():
+    """Covers bugs_conocidos.md: a worktree delete/move confirm on the
+    blank/unnamed last-tab screen (where "Close Mini" is also showing)
+    used to leave the confirm box's own border/list behind once it
+    closed - `render`'s full-redraw check ranked close_box ahead of
+    confirm_box, so close_box staying up the whole time hid confirm_
+    box's own appearing/disappearing. Needs the real `TextEditor` (not
+    the lightweight `FakeRenderer`/`FakeCommands` used elsewhere in
+    this file) since the bug is in `render`'s own bookkeeping across
+    two full frames, not in any one geometry/dispatch helper."""
+    import theme
+    import rendering
+    from text_editor import TextEditor
+
+    class FakeSize:
+        columns, lines = 80, 24
+
+    original_get_size = rendering._get_terminal_size
+    original_mouse_enabled = theme.MOUSE_ENABLED
+    rendering._get_terminal_size = lambda: FakeSize()
+    theme.MOUSE_ENABLED = True
+
+    class FakeStdout:
+        def __init__(self):
+            self.chunks = []
+
+        def write(self, text):
+            self.chunks.append(text)
+
+        def flush(self):
+            pass
+
+    fake_stdout = FakeStdout()
+    original_stdout = sys.stdout
+    sys.stdout = fake_stdout
+    try:
+        editor = TextEditor(file_name=None)  # blank buffer, one tab
+        editor._confirm_dialog = {
+            "prompt": "Delete 3 items? (y/n)", "hovered": None,
+            "items": ["a.txt", "b.txt", "c.txt"], "scroll": 0,
+        }
+        editor._render()
+        fake_stdout.chunks.clear()
+        editor._confirm_dialog = None
+        editor._render()
+        closing_frame = "".join(fake_stdout.chunks)
+    finally:
+        sys.stdout = original_stdout
+        rendering._get_terminal_size = original_get_size
+        theme.MOUSE_ENABLED = original_mouse_enabled
+    assert "\x1b[2J" in closing_frame
+
+
 TESTS = [
     test_geometry_and_render_stay_aligned,
     test_press_on_yes_and_no_returns_the_right_answer,
@@ -291,4 +344,5 @@ TESTS = [
     test_wheel_scrolls_the_item_list_and_clamps_at_both_ends,
     test_wheel_is_a_no_op_when_the_whole_list_already_fits,
     test_wheel_without_items_never_touches_scroll,
+    test_closing_confirm_box_over_the_welcome_screen_forces_a_full_redraw,
 ]

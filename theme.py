@@ -95,8 +95,16 @@ _COLOR_GROUPS = (
         "KEYWORD_COLOR": "keywords (if/for/while/...), not def/class",
         "DECLARATION_COLOR": "def and class themselves",
         "DUNDER_COLOR": "__dunder__ names",
-        "TYPE_COLOR": "builtin type names (int, str, list, ...)",
+        "TYPE_COLOR": (
+            "builtin type names (int, str, list, ...), a class's own "
+            "name where it's defined, and any type annotation"
+        ),
         "FUNCTION_COLOR": "function calls and definitions",
+        "PARAMETER_COLOR": (
+            "a function/method definition's own parameter names "
+            "(not its call sites' arguments, and not a parameter's "
+            "own type annotation - see TYPE_COLOR)"
+        ),
         "STRING_COLOR": "string literals",
         "COMMENT_COLOR": "comments, and triple-quoted docstrings",
     }),
@@ -122,6 +130,7 @@ _COLOR_KINDS = {
     "DUNDER_COLOR": "fg",
     "TYPE_COLOR": "fg",
     "FUNCTION_COLOR": "fg",
+    "PARAMETER_COLOR": "fg",
     "SUGGESTION_COLOR": "fg",
     "ACTIVE_TAB_COLOR": "bg",
     "INACTIVE_TAB_COLOR": "bg",
@@ -138,7 +147,7 @@ DEFAULT_THEMES = {
         "BACKGROUND_COLOR": 235, "TEXT_COLOR": 252, "LINE_NUMBER_COLOR": 244,
         "CURRENT_LINE_INDICATOR_COLOR": 214, "BRACKET_MATCH_COLOR": 238,
         "KEYWORD_COLOR": 33, "DUNDER_COLOR": 11, "TYPE_COLOR": 2,
-        "FUNCTION_COLOR": 5, "SUGGESTION_COLOR": 244,
+        "FUNCTION_COLOR": 5, "PARAMETER_COLOR": 208, "SUGGESTION_COLOR": 244,
         "ACTIVE_TAB_COLOR": 240, "INACTIVE_TAB_COLOR": 232,
         "RULER_COLOR": 238,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
@@ -149,7 +158,7 @@ DEFAULT_THEMES = {
         "BACKGROUND_COLOR": 233, "TEXT_COLOR": 250, "LINE_NUMBER_COLOR": 240,
         "CURRENT_LINE_INDICATOR_COLOR": 208, "BRACKET_MATCH_COLOR": 236,
         "KEYWORD_COLOR": 39, "DUNDER_COLOR": 221, "TYPE_COLOR": 78,
-        "FUNCTION_COLOR": 176, "SUGGESTION_COLOR": 240,
+        "FUNCTION_COLOR": 176, "PARAMETER_COLOR": 214, "SUGGESTION_COLOR": 240,
         "ACTIVE_TAB_COLOR": 242, "INACTIVE_TAB_COLOR": 236,
         "RULER_COLOR": 236,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
@@ -160,7 +169,7 @@ DEFAULT_THEMES = {
         "BACKGROUND_COLOR": 253, "TEXT_COLOR": 235, "LINE_NUMBER_COLOR": 246,
         "CURRENT_LINE_INDICATOR_COLOR": 166, "BRACKET_MATCH_COLOR": 250,
         "KEYWORD_COLOR": 18, "DUNDER_COLOR": 94, "TYPE_COLOR": 22,
-        "FUNCTION_COLOR": 90, "SUGGESTION_COLOR": 246,
+        "FUNCTION_COLOR": 90, "PARAMETER_COLOR": 172, "SUGGESTION_COLOR": 246,
         "ACTIVE_TAB_COLOR": 231, "INACTIVE_TAB_COLOR": 250,
         "RULER_COLOR": 249,
         "LINE_LENGTH_ERROR_COLOR": 160, "STRING_COLOR": 25,
@@ -405,15 +414,7 @@ def _default_rc_text():
 
 def _refresh_backup_if_valid(settings, primary_settings, primary_themes):
     fully_valid = (
-        "THEME" in primary_settings
-        and "SHOW_NUMBER_LINE" in primary_settings
-        and "SHOW_LINE_INDICATOR" in primary_settings
-        and "MAX_COLS_ENABLED" in primary_settings
-        and "MAX_COLS" in primary_settings
-        and "INDENT_WITH_TABS" in primary_settings
-        and "TAB_SIZE" in primary_settings
-        and "MOUSE_ENABLED" in primary_settings
-        and "AUTOSAVE" in primary_settings
+        all(key in primary_settings for key in DEFAULT_SETTINGS)
         and _is_theme_fully_valid(settings["THEME"], primary_themes)
     )
     if not fully_valid:
@@ -556,67 +557,69 @@ def _apply_loaded_state():
     through `theme.NAME`, never `from theme import NAME`, so
     reassigning them here is all a reload ever needs - nothing
     elsewhere holds its own stale copy."""
-    global _settings, _colors, _filetype_overrides
+    global _filetype_overrides
     global SHOW_NUMBER_LINE, SHOW_LINE_INDICATOR, MAX_COLS_ENABLED
     global MAX_COLS, INDENT_WITH_TABS, TAB_SIZE, MOUSE_ENABLED, AUTOSAVE
     global BACKGROUND_COLOR, TEXT_COLOR, BASE_STYLE, COLOR_RESET
     global LINE_NUMBER_COLOR, CURRENT_LINE_INDICATOR_COLOR
     global BRACKET_MATCH_START, BRACKET_MATCH_END
     global KEYWORD_COLOR, DUNDER_COLOR, TYPE_COLOR, FUNCTION_COLOR
+    global PARAMETER_COLOR
     global SUGGESTION_COLOR, SUGGESTION_RESET
     global ACTIVE_TAB_COLOR, INACTIVE_TAB_COLOR
     global RULER_COLOR, LINE_LENGTH_ERROR_COLOR, STRING_COLOR
     global DECLARATION_COLOR, COMMENT_COLOR, WORD_MATCH_START, WORD_MATCH_END
 
-    _settings, _colors, _filetype_overrides = _load()
+    settings, colors, _filetype_overrides = _load()
 
-    SHOW_NUMBER_LINE = _settings["SHOW_NUMBER_LINE"]
-    SHOW_LINE_INDICATOR = _settings["SHOW_LINE_INDICATOR"]
-    MAX_COLS_ENABLED = _settings["MAX_COLS_ENABLED"]
-    MAX_COLS = _settings["MAX_COLS"]
-    INDENT_WITH_TABS = _settings["INDENT_WITH_TABS"]
-    TAB_SIZE = _settings["TAB_SIZE"]
-    MOUSE_ENABLED = _settings["MOUSE_ENABLED"]
-    AUTOSAVE = _settings["AUTOSAVE"]
+    SHOW_NUMBER_LINE = settings["SHOW_NUMBER_LINE"]
+    SHOW_LINE_INDICATOR = settings["SHOW_LINE_INDICATOR"]
+    MAX_COLS_ENABLED = settings["MAX_COLS_ENABLED"]
+    MAX_COLS = settings["MAX_COLS"]
+    INDENT_WITH_TABS = settings["INDENT_WITH_TABS"]
+    TAB_SIZE = settings["TAB_SIZE"]
+    MOUSE_ENABLED = settings["MOUSE_ENABLED"]
+    AUTOSAVE = settings["AUTOSAVE"]
 
-    BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", _colors["BACKGROUND_COLOR"])
-    TEXT_COLOR = _ansi("TEXT_COLOR", _colors["TEXT_COLOR"])
+    BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", colors["BACKGROUND_COLOR"])
+    TEXT_COLOR = _ansi("TEXT_COLOR", colors["TEXT_COLOR"])
     BASE_STYLE = BACKGROUND_COLOR + TEXT_COLOR
     COLOR_RESET = TEXT_COLOR
 
-    LINE_NUMBER_COLOR = _ansi("LINE_NUMBER_COLOR", _colors["LINE_NUMBER_COLOR"])
+    LINE_NUMBER_COLOR = _ansi("LINE_NUMBER_COLOR", colors["LINE_NUMBER_COLOR"])
     CURRENT_LINE_INDICATOR_COLOR = _ansi(
-        "CURRENT_LINE_INDICATOR_COLOR", _colors["CURRENT_LINE_INDICATOR_COLOR"]
+        "CURRENT_LINE_INDICATOR_COLOR", colors["CURRENT_LINE_INDICATOR_COLOR"]
     )
 
     BRACKET_MATCH_START = _ansi(
-        "BRACKET_MATCH_COLOR", _colors["BRACKET_MATCH_COLOR"]
+        "BRACKET_MATCH_COLOR", colors["BRACKET_MATCH_COLOR"]
     )
     BRACKET_MATCH_END = BACKGROUND_COLOR
 
-    KEYWORD_COLOR = _ansi("KEYWORD_COLOR", _colors["KEYWORD_COLOR"])
-    DUNDER_COLOR = _ansi("DUNDER_COLOR", _colors["DUNDER_COLOR"])
-    TYPE_COLOR = _ansi("TYPE_COLOR", _colors["TYPE_COLOR"])
-    FUNCTION_COLOR = _ansi("FUNCTION_COLOR", _colors["FUNCTION_COLOR"])
+    KEYWORD_COLOR = _ansi("KEYWORD_COLOR", colors["KEYWORD_COLOR"])
+    DUNDER_COLOR = _ansi("DUNDER_COLOR", colors["DUNDER_COLOR"])
+    TYPE_COLOR = _ansi("TYPE_COLOR", colors["TYPE_COLOR"])
+    FUNCTION_COLOR = _ansi("FUNCTION_COLOR", colors["FUNCTION_COLOR"])
+    PARAMETER_COLOR = _ansi("PARAMETER_COLOR", colors["PARAMETER_COLOR"])
 
-    SUGGESTION_COLOR = _ansi("SUGGESTION_COLOR", _colors["SUGGESTION_COLOR"])
+    SUGGESTION_COLOR = _ansi("SUGGESTION_COLOR", colors["SUGGESTION_COLOR"])
     SUGGESTION_RESET = BASE_STYLE
 
-    ACTIVE_TAB_COLOR = _ansi("ACTIVE_TAB_COLOR", _colors["ACTIVE_TAB_COLOR"])
+    ACTIVE_TAB_COLOR = _ansi("ACTIVE_TAB_COLOR", colors["ACTIVE_TAB_COLOR"])
     INACTIVE_TAB_COLOR = _ansi(
-        "INACTIVE_TAB_COLOR", _colors["INACTIVE_TAB_COLOR"]
+        "INACTIVE_TAB_COLOR", colors["INACTIVE_TAB_COLOR"]
     )
 
-    RULER_COLOR = _ansi("RULER_COLOR", _colors["RULER_COLOR"])
+    RULER_COLOR = _ansi("RULER_COLOR", colors["RULER_COLOR"])
     LINE_LENGTH_ERROR_COLOR = _ansi(
-        "LINE_LENGTH_ERROR_COLOR", _colors["LINE_LENGTH_ERROR_COLOR"]
+        "LINE_LENGTH_ERROR_COLOR", colors["LINE_LENGTH_ERROR_COLOR"]
     )
-    STRING_COLOR = _ansi("STRING_COLOR", _colors["STRING_COLOR"])
+    STRING_COLOR = _ansi("STRING_COLOR", colors["STRING_COLOR"])
     DECLARATION_COLOR = _ansi(
-        "DECLARATION_COLOR", _colors["DECLARATION_COLOR"]
+        "DECLARATION_COLOR", colors["DECLARATION_COLOR"]
     )
-    COMMENT_COLOR = _ansi("COMMENT_COLOR", _colors["COMMENT_COLOR"])
-    WORD_MATCH_START = _ansi("WORD_MATCH_COLOR", _colors["WORD_MATCH_COLOR"])
+    COMMENT_COLOR = _ansi("COMMENT_COLOR", colors["COMMENT_COLOR"])
+    WORD_MATCH_START = _ansi("WORD_MATCH_COLOR", colors["WORD_MATCH_COLOR"])
     WORD_MATCH_END = BACKGROUND_COLOR
 
 

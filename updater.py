@@ -246,6 +246,25 @@ def _recover_non_fast_forward(src_dir):
     return _git(src_dir, "reset", "--hard", f"origin/{branch_name}")
 
 
+def _require_bindir(install_dir, failure_detail):
+    """LIBDIR/BINDIR from `install_dir`'s own env file (see
+    `_read_env`) - `_apply_update`/`run_uninstall_command`'s shared
+    guard, since both need a working install to do anything at all.
+    Prints why and returns (None, None) if BINDIR is missing (a
+    broken/tampered env file) - `failure_detail` is the specific
+    remedy each caller's own message ends with."""
+    env_values = _read_env(install_dir)
+    libdir = env_values.get("LIBDIR", install_dir)
+    bindir = env_values.get("BINDIR")
+    if not bindir:
+        print(
+            "Could not find the install's configuration "
+            f"({os.path.join(install_dir, 'env')}); {failure_detail}"
+        )
+        return None, None
+    return libdir, bindir
+
+
 def _apply_update(src_dir, install_dir):
     """Pulls and reinstalls in place - the shared core of `mini
     --update` and the startup update prompt below. Prints why, and
@@ -262,29 +281,26 @@ def _apply_update(src_dir, install_dir):
     if status.stdout.strip():
         print("The install has uncommitted changes, cancelling the update.")
         return False
-    env_values = _read_env(install_dir)
-    libdir = env_values.get("LIBDIR", install_dir)
-    bindir = env_values.get("BINDIR")
-    if not bindir:
-        print(
-            "Could not find the install's configuration "
-            f"({os.path.join(install_dir, 'env')}); reinstall with "
-            "'make install'."
-        )
+    libdir, bindir = _require_bindir(
+        install_dir, "reinstall with 'make install'."
+    )
+    if bindir is None:
         return False
-    with _spinner("Updating..."):
-        pull = subprocess.run(
-            ["git", "-C", src_dir, "pull", "--ff-only"], env=_GIT_ENV,
-            capture_output=True, text=True,
-        )
-        if pull.returncode != 0:
-            pull = _recover_non_fast_forward(src_dir)
-        install_result = None
-        if pull.returncode == 0:
-            install_result = subprocess.run(
-                ["bash", os.path.join(src_dir, "install.sh"), libdir, bindir],
-                capture_output=True, text=True,
-            )
+    try:
+        with _spinner("Updating..."):
+            pull = _git(src_dir, "pull", "--ff-only", timeout=30)
+            if pull.returncode != 0:
+                pull = _recover_non_fast_forward(src_dir)
+            install_result = None
+            if pull.returncode == 0:
+                install_result = subprocess.run(
+                    ["bash", os.path.join(src_dir, "install.sh"), libdir,
+                     bindir],
+                    capture_output=True, text=True, timeout=300,
+                )
+    except (subprocess.TimeoutExpired, OSError) as error:
+        print(f"Update timed out or failed to run: {error}")
+        return False
     if pull.returncode != 0:
         print("git pull failed. Update cancelled.")
         _print_subprocess_output(pull)
@@ -422,15 +438,10 @@ def run_uninstall_command():
         )
         return
     src_dir, install_dir = _paths()
-    env_values = _read_env(install_dir)
-    libdir = env_values.get("LIBDIR", install_dir)
-    bindir = env_values.get("BINDIR")
-    if not bindir:
-        print(
-            "Could not find the install's configuration "
-            f"({os.path.join(install_dir, 'env')}); can't "
-            "uninstall automatically."
-        )
+    libdir, bindir = _require_bindir(
+        install_dir, "can't uninstall automatically."
+    )
+    if bindir is None:
         return
     try:
         answer = input(

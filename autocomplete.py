@@ -2,7 +2,12 @@
 buffer plus Python's own keywords/builtins, module-name completion
 after import/from, and type-aware `name.` completion (literals,
 locally-defined classes via ast, or classes/modules introspected in
-an isolated subprocess)."""
+an isolated subprocess). C/C++'s own comment-scanning and #include
+machinery lives in c_autocomplete.py, and the subprocess/jedi
+introspection engine in python_introspection.py - both split out of
+here, since neither has anything to do with the Python-specific
+(ast/type-inference) completion that makes up the rest of this
+file."""
 
 import ast
 import bisect
@@ -10,14 +15,21 @@ import builtins
 import keyword
 import os
 import re
-import shutil
-import subprocess
 import sys
 
 import theme
+from c_autocomplete import (
+    _INCLUDE_LINE_PATTERN, _INCLUDE_PATTERN, _WORD_PATTERN,
+    _compiler_include_dirs, _header_words, _is_inside_c_string_or_comment,
+    _resolve_system_header_path, _system_header_names,
+)
 from languages import (
     C_KEYWORDS, C_TYPE_NAMES, CPP_KEYWORDS, CPP_LITERALS, CPP_TYPE_NAMES,
     language_for,
+)
+from python_introspection import (
+    _check_import_resolves, _introspect_class_members,
+    _introspect_module_members, _jedi_completions,
 )
 
 MIN_SUGGESTION_PREFIX = 2
@@ -69,17 +81,6 @@ _TYPE_INFERENCE_RULES = (
 )
 _CALL_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(")
 _CLASS_DEF_PATTERN = re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)")
-_CLASS_INTROSPECTION_SCRIPT = (
-    "import sys, importlib\n"
-    "sys.path.insert(0, sys.argv[1])\n"
-    "module = importlib.import_module(sys.argv[2])\n"
-    "obj = getattr(module, sys.argv[3])\n"
-    "names = [\n"
-    "    n for n in dir(obj)\n"
-    "    if not (n.startswith('__') and n.endswith('__'))\n"
-    "]\n"
-    "print('\\n'.join(names))\n"
-)
 MODULE_VOCABULARY = sorted(
     name for name in sys.stdlib_module_names if not name.startswith("_")
 )
@@ -91,50 +92,26 @@ FROM_IMPORT_NAMES_PATTERN = re.compile(
 FROM_IMPORT_LINE_PATTERN = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)$")
 _BARE_IMPORT_LINE_PATTERN = re.compile(r"^\s*import\s+(.+)$")
 MAX_SUGGESTION_DROPDOWN_ITEMS = 8
-_IMPORT_CHECK_SCRIPT = (
-    "import sys, importlib\n"
-    "sys.path.insert(0, sys.argv[1])\n"
-    "try:\n"
-    "    module = importlib.import_module(sys.argv[2])\n"
-    "except Exception:\n"
-    "    print('BROKEN')\n"
-    "else:\n"
-    "    missing = [n for n in sys.argv[3:] if not hasattr(module, n)]\n"
-    "    print('BROKEN' if missing else 'OK')\n"
-)
-_MODULE_INTROSPECTION_SCRIPT = (
-    "import sys, importlib, os\n"
-    "sys.path.insert(0, sys.argv[1])\n"
-    "module = importlib.import_module(sys.argv[2])\n"
-    "names = {\n"
-    "    n for n in dir(module)\n"
-    "    if not (n.startswith('__') and n.endswith('__'))\n"
-    "}\n"
-    # A package (regular or namespace - both have __path__) can be
-    # imported from with its submodules/subpackages too, and those
-    # aren't in dir() unless something already imported them - so
-    # its directory is scanned directly for candidates as well.
-    "for path in getattr(module, '__path__', []):\n"
-    "    try:\n"
-    "        entries = os.scandir(path)\n"
-    "    except OSError:\n"
-    "        continue\n"
-    "    for entry in entries:\n"
-    "        if entry.name in ('__init__.py', '__pycache__'):\n"
-    "            continue\n"
-    "        if entry.is_file() and entry.name.endswith('.py'):\n"
-    "            names.add(entry.name[:-3])\n"
-    "        elif entry.is_dir() and not entry.name.startswith('.'):\n"
-    "            names.add(entry.name)\n"
-    "print('\\n'.join(names))\n"
-)
 
 
 def _is_word_char(character):
     return character.isalnum() or character == "_"
 
 
-_WORD_PATTERN = re.compile(r"\w+")
+def _matches_by_prefix(pool, prefix):
+    """Every entry in `pool` that starts with `prefix` but isn't
+    exactly `prefix` itself, shortest first - the one ranking/
+    filtering rule shared by every suggestion source (buffer words,
+    keywords, included headers, ...)."""
+    return sorted(
+        (
+            item for item in pool
+            if item != prefix and item.startswith(prefix)
+        ),
+        key=len,
+    )
+
+
 _LINE_WORD_CACHE_LIMIT = 20000
 
 
@@ -159,144 +136,6 @@ def _is_inside_string_or_comment(line, column):
             quote = character
         index += 1
     return quote is not None
-
-
-def _is_inside_c_string_or_comment(line, column):
-    """Like `_is_inside_string_or_comment`, for C/C++'s comment
-    styles instead of Python's `#`: `//` runs to the end of the line;
-    a same-line `/* ... */` is skipped over entirely (scanning
-    resumes right after it); one that doesn't close by `column` on
-    this line counts as "inside" - same single-line-only limitation
-    as a block comment actually spanning multiple lines, which this
-    can't see across."""
-    quote = None
-    index = 0
-    while index < column and index < len(line):
-        character = line[index]
-        if quote:
-            if character == "\\":
-                index += 2
-                continue
-            if character == quote:
-                quote = None
-            index += 1
-            continue
-        if character == "/" and line[index:index + 2] == "//":
-            return True
-        if character == "/" and line[index:index + 2] == "/*":
-            end = line.find("*/", index + 2)
-            if end == -1 or end + 2 > column:
-                return True
-            index = end + 2
-            continue
-        if character in ("'", '"'):
-            quote = character
-        index += 1
-    return quote is not None
-
-
-_INCLUDE_PATTERN = re.compile(r'^\s*#\s*include\s+([<"])')
-_INCLUDE_LINE_PATTERN = re.compile(r'^\s*#\s*include\s+([<"])([^>"]+)[>"]')
-
-_compiler_include_dirs_cache = {}
-
-
-def _compiler_include_dirs(cpp):
-    """The real system include search path of whatever C/C++
-    compiler is actually installed, found by asking it directly (the
-    same `-Wp,-v` trick `gcc`/`clang` themselves document) instead of
-    guessing a fixed path - the same "introspect the real thing"
-    philosophy as Python's module completion, one layer down (the
-    compiler instead of the interpreter). This never changes
-    mid-session, so the actual subprocess call only ever happens
-    once per c/c++ distinction."""
-    if cpp not in _compiler_include_dirs_cache:
-        compiler = (
-            shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
-        )
-        directories = []
-        if compiler:
-            try:
-                lang = "c++" if cpp else "c"
-                result = subprocess.run(
-                    [compiler, "-E", "-Wp,-v", "-x", lang, "-"],
-                    input="", capture_output=True, text=True, timeout=3,
-                )
-            except (subprocess.TimeoutExpired, OSError):
-                result = None
-            if result is not None:
-                capturing = False
-                for line in result.stderr.split("\n"):
-                    if "search starts here" in line:
-                        capturing = True
-                    elif line.startswith("End of search list"):
-                        break
-                    elif capturing:
-                        directories.append(line.strip())
-        _compiler_include_dirs_cache[cpp] = [
-            d for d in directories if os.path.isdir(d)
-        ]
-    return _compiler_include_dirs_cache[cpp]
-
-
-def _resolve_system_header_path(header_name, cpp):
-    """The real file path `#include <header_name>` would pull in, or
-    None if it can't be found in the compiler's own include
-    directories (no compiler on PATH, or a header name that isn't
-    actually one of its real headers)."""
-    for directory in _compiler_include_dirs(cpp):
-        candidate = os.path.join(directory, header_name)
-        if os.path.isfile(candidate):
-            return candidate
-    return None
-
-
-_header_word_cache = {}
-
-
-def _header_words(path):
-    """Identifier-like words found anywhere in the header at `path` -
-    the same word-based idea as everything else in C/C++ completion
-    here, just reaching into a file named by #include instead of
-    only the buffer being edited. A header's content never changes
-    mid-session (from Mini's own perspective - nothing here ever
-    writes to it), so each one is only ever read and scanned once."""
-    if path not in _header_word_cache:
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as file:
-                text = file.read()
-        except OSError:
-            _header_word_cache[path] = frozenset()
-        else:
-            _header_word_cache[path] = frozenset(_WORD_PATTERN.findall(text))
-    return _header_word_cache[path]
-
-
-_system_header_cache = {}
-
-
-def _system_header_names(cpp):
-    """Every header name offered by `#include <...>` - walking each
-    of the compiler's own include directories and collecting file
-    names relative to it (so `sys/types.h` and similar
-    subdirectory-qualified names come out right), including
-    extensionless files since C++'s own standard headers
-    (`<vector>`, `<string>`, ...) have no extension at all. The
-    compiler's own include paths never change mid-session, so this
-    only actually walks them once."""
-    if cpp not in _system_header_cache:
-        names = set()
-        for directory in _compiler_include_dirs(cpp):
-            for root, _dirs, files in os.walk(directory):
-                for file_name in files:
-                    if "." in file_name and not file_name.endswith(
-                        (".h", ".hpp", ".hh", ".hxx")
-                    ):
-                        continue
-                    full_path = os.path.join(root, file_name)
-                    names.add(os.path.relpath(full_path, directory))
-        _system_header_cache[cpp] = names
-    return _system_header_cache[cpp]
 
 
 def _parse_imported_names(context_before):
@@ -334,149 +173,6 @@ def _parse_bare_import_modules(rest):
         if module:
             modules.append(module)
     return modules
-
-
-def _check_import_resolves(directory, module_name, names, python_path):
-    """True if this import is broken - the module itself fails to
-    import, or (for `from module_name import a, b`) any of `names`
-    isn't actually an attribute of it once imported - checked for
-    real, by actually trying it in an isolated subprocess using
-    `python_path` (normally the project's own resolved virtualenv,
-    the same interpreter :run/:lint would use for this file - not
-    necessarily Mini's own). False if it resolves; None if it
-    couldn't even be checked (a `python_path` that doesn't work)."""
-    try:
-        result = subprocess.run(
-            [python_path, "-c", _IMPORT_CHECK_SCRIPT, directory,
-             module_name, *names],
-            capture_output=True, text=True, timeout=3,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    return result.stdout.strip() == "BROKEN"
-
-
-def _introspect_module_members(directory, module_name, python_path):
-    """Names `from module_name import <TAB>` could offer, found by
-    actually importing the module in a throwaway subprocess (with
-    `directory` on its sys.path, so local project files resolve too),
-    using `python_path` - normally the project's own resolved
-    virtualenv, the same interpreter :run/:lint would use for this
-    file - not necessarily Mini's own, so a module only installed in
-    the project's virtualenv isn't wrongly treated as having no
-    members.
-
-    A subprocess - not an in-process import - because this runs
-    whatever top-level code the module has, including local files
-    still being edited; a timeout and total isolation from Mini itself
-    keep a slow or broken module from freezing the editor."""
-    try:
-        result = subprocess.run(
-            [
-                python_path, "-c", _MODULE_INTROSPECTION_SCRIPT,
-                directory, module_name,
-            ],
-            capture_output=True, text=True, timeout=2,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return set()
-    if result.returncode != 0:
-        return set()
-    return set(result.stdout.split())
-
-
-def _introspect_class_members(directory, module_name, class_name, python_path):
-    """Like `_introspect_module_members`, but for one class imported
-    from a module (`from module_name import ClassName`), so `thing.`
-    can offer that class's own methods instead of every builtin type's
-    methods mixed together. Same `python_path` reasoning as above."""
-    try:
-        result = subprocess.run(
-            [
-                python_path, "-c", _CLASS_INTROSPECTION_SCRIPT,
-                directory, module_name, class_name,
-            ],
-            capture_output=True, text=True, timeout=2,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return set()
-    if result.returncode != 0:
-        return set()
-    return set(result.stdout.split())
-
-
-_jedi_module = None
-_jedi_import_attempted = False
-_jedi_environment_cache = {}
-
-
-def _get_jedi():
-    """Mini's own bundled `jedi`, if this install has one (a private
-    venv `make install` creates and manages - see install.sh) - else
-    None, imported at most once per session. Never a hard dependency:
-    every caller below treats None (or any failure past this point)
-    as "fall back to Mini's own heuristics", exactly as if jedi had
-    never been tried - so a dev checkout run straight with `python3
-    main.py`, with no such venv, still works exactly as before."""
-    global _jedi_module, _jedi_import_attempted
-    if not _jedi_import_attempted:
-        _jedi_import_attempted = True
-        try:
-            import jedi  # type: ignore[import-not-found]
-        except ImportError:
-            jedi = None
-        _jedi_module = jedi
-    return _jedi_module
-
-
-def _jedi_environment(python_path):
-    """A cached `jedi.Environment` for `python_path` (the project's
-    own resolved interpreter, same as everywhere else here) - or None
-    if jedi isn't available or can't be pointed at it, in which case
-    callers fall back to Mini's own heuristics."""
-    jedi = _get_jedi()
-    if jedi is None:
-        return None
-    if python_path not in _jedi_environment_cache:
-        environment = None
-        try:
-            environment = jedi.create_environment(python_path, safe=False)
-        except Exception:
-            try:
-                environment = jedi.get_default_environment()
-            except Exception:
-                environment = None
-        _jedi_environment_cache[python_path] = environment
-    return _jedi_environment_cache[python_path]
-
-
-def _jedi_completions(source_text, file_name, line, column, python_path):
-    """Completion name strings from jedi at (1-indexed `line`,
-    0-indexed `column`) in `source_text`, resolving imports with
-    `python_path` the same way :run/:lint would - or None if jedi
-    isn't installed, or the call fails for any reason (an
-    unsupported jedi version, a still-invalid buffer, a slow/broken
-    environment probe, ...), so callers can fall back to Mini's own
-    heuristics exactly as if jedi had never been tried. Deliberately
-    catches every exception, not just expected ones: jedi is a large
-    third-party parser/inference engine, and the entire point of
-    trying it here is best-effort - it must never be able to break or
-    freeze suggestions, only improve them when it works."""
-    jedi = _get_jedi()
-    if jedi is None:
-        return None
-    environment = _jedi_environment(python_path)
-    try:
-        script = jedi.Script(
-            code=source_text, path=file_name, environment=environment,
-        )
-        completions = script.complete(line, column)
-        return {
-            completion.name for completion in completions
-            if not completion.name.startswith("__")
-        }
-    except Exception:
-        return None
 
 
 def _local_class_methods(source_text, class_name):
@@ -544,6 +240,29 @@ def _enclosing_class_members(source_text, line_index):
     return names
 
 
+class SuggestionCaches:
+    """Every cache/scratch value autocompletion keeps between renders,
+    grouped into its own object (constructed once, in TextEditor's own
+    `__init__`) instead of a dozen loose `self._..._cache` attributes.
+    `word_pool_*` back `_rebuild_static_word_pool`/`_ensure_word_pool_
+    fresh`'s own "only the cursor's line changed" shortcut; the three
+    dict caches are each keyed by (directory, module, ...) tuples, one
+    per external lookup that's worth not repeating (`_check_import_
+    resolves`, module/class introspection, jedi)."""
+
+    def __init__(self):
+        self.import_members = {}
+        self.import_broken = {}
+        self.jedi_attribute = {}
+        self.line_word = {}
+        self.word_pool_static = frozenset()
+        self.word_pool_static_sorted = []
+        self.included_header_words_sorted = []
+        self.word_pool_lines_ref = None
+        self.word_pool_line_count = -1
+        self.word_pool_line_index = -1
+
+
 class SuggestionMixin:
 
     def _current_word_prefix(self):
@@ -553,12 +272,20 @@ class SuggestionMixin:
             start -= 1
         return line[start:self.column]
 
+    def _file_directory(self):
+        """The directory suggestions should resolve module/header
+        paths relative to - the current file's own directory, or the
+        cwd for a buffer with no file yet (a new, unsaved tab)."""
+        return (
+            os.path.dirname(self.file_name) if self.file_name else ""
+        ) or os.getcwd()
+
     def _line_words(self, line):
         """The identifier-like words in one line's text, cached by the
         line's own content rather than its position - so it stays
         correct no matter how lines are inserted, deleted, or
         reordered, since the key IS the content."""
-        cache = self._line_word_cache
+        cache = self._suggestion_caches.line_word
         words = cache.get(line)
         if words is None:
             words = frozenset(_WORD_PATTERN.findall(line))
@@ -571,9 +298,7 @@ class SuggestionMixin:
         language = language_for(self.file_name)
         collect_includes = language in ("c", "cpp")
         include_words = set()
-        directory = (
-            os.path.dirname(self.file_name) if self.file_name else ""
-        ) or os.getcwd()
+        directory = self._file_directory()
         for index, line in enumerate(self.lines):
             if index != self.line:
                 words |= self._line_words(line)
@@ -591,21 +316,22 @@ class SuggestionMixin:
                         )
                         if path:
                             include_words |= _header_words(path)
-        self._word_pool_static = words
+        caches = self._suggestion_caches
+        caches.word_pool_static = words
         # Sorted once here, not on every keystroke: lets
         # _buffer_words_matching find a prefix's matches by binary
         # search instead of scanning every unique word in the file.
-        self._word_pool_static_sorted = sorted(words)
-        self._included_header_words_sorted = sorted(include_words)
-        self._word_pool_lines_ref = self.lines
-        self._word_pool_line_count = len(self.lines)
-        self._word_pool_line_index = self.line
+        caches.word_pool_static_sorted = sorted(words)
+        caches.included_header_words_sorted = sorted(include_words)
+        caches.word_pool_lines_ref = self.lines
+        caches.word_pool_line_count = len(self.lines)
+        caches.word_pool_line_index = self.line
 
     def _ensure_word_pool_fresh(self):
         if (
-            self.lines is not self._word_pool_lines_ref
-            or len(self.lines) != self._word_pool_line_count
-            or self.line != self._word_pool_line_index
+            self.lines is not self._suggestion_caches.word_pool_lines_ref
+            or len(self.lines) != self._suggestion_caches.word_pool_line_count
+            or self.line != self._suggestion_caches.word_pool_line_index
         ):
             self._rebuild_static_word_pool()
 
@@ -617,7 +343,7 @@ class SuggestionMixin:
         schedule as the buffer's own word pool, via the same binary
         search over a cached sorted list."""
         self._ensure_word_pool_fresh()
-        sorted_words = self._included_header_words_sorted
+        sorted_words = self._suggestion_caches.included_header_words_sorted
         low = bisect.bisect_left(sorted_words, prefix)
         high = bisect.bisect_left(sorted_words, prefix + "\uffff")
         return set(sorted_words[low:high])
@@ -638,7 +364,10 @@ class SuggestionMixin:
         current_line = (
             self.lines[self.line] if 0 <= self.line < len(self.lines) else ""
         )
-        return self._word_pool_static | self._line_words(current_line)
+        return (
+            self._suggestion_caches.word_pool_static
+            | self._line_words(current_line)
+        )
 
     def _buffer_words_matching(self, prefix):
         """Buffer words starting with `prefix` - the hot path for
@@ -650,7 +379,7 @@ class SuggestionMixin:
         all of them by prefix every keystroke doesn't scale any better
         than not caching the word set in the first place."""
         self._ensure_word_pool_fresh()
-        sorted_words = self._word_pool_static_sorted
+        sorted_words = self._suggestion_caches.word_pool_static_sorted
         low = bisect.bisect_left(sorted_words, prefix)
         high = bisect.bisect_left(sorted_words, prefix + "\uffff")
         matches = set(sorted_words[low:high])
@@ -664,9 +393,7 @@ class SuggestionMixin:
         return matches
 
     def _local_module_names(self):
-        directory = (
-            os.path.dirname(self.file_name) if self.file_name else ""
-        ) or os.getcwd()
+        directory = self._file_directory()
         names = set()
         try:
             entries = os.scandir(directory)
@@ -692,9 +419,7 @@ class SuggestionMixin:
         """Header files next to the one being edited, for
         `#include "..."` - the C/C++ equivalent of
         `_local_module_names`'s local `.py` files."""
-        directory = (
-            os.path.dirname(self.file_name) if self.file_name else ""
-        ) or os.getcwd()
+        directory = self._file_directory()
         names = set()
         try:
             entries = os.scandir(directory)
@@ -718,9 +443,7 @@ class SuggestionMixin:
         none, the same reasoning `#include <...>` completion itself
         already follows."""
         if opening == '"':
-            directory = (
-                os.path.dirname(self.file_name) if self.file_name else ""
-            ) or os.getcwd()
+            directory = self._file_directory()
             return not os.path.isfile(os.path.join(directory, header_name))
         cpp = language == "cpp"
         if not _compiler_include_dirs(cpp):
@@ -740,15 +463,14 @@ class SuggestionMixin:
             and module_name in MODULE_VOCABULARY
         ):
             return False
-        directory = (
-            os.path.dirname(self.file_name) if self.file_name else ""
-        ) or os.getcwd()
+        directory = self._file_directory()
         cache_key = (python_path, directory, module_name, tuple(names))
-        if cache_key not in self._import_broken_cache:
-            self._import_broken_cache[cache_key] = _check_import_resolves(
+        caches = self._suggestion_caches
+        if cache_key not in caches.import_broken:
+            caches.import_broken[cache_key] = _check_import_resolves(
                 directory, module_name, names, python_path
             )
-        return bool(self._import_broken_cache[cache_key])
+        return bool(caches.import_broken[cache_key])
 
     def _import_line_broken(self, line, python_path):
         """Whether this line's import(s) would actually fail to
@@ -772,22 +494,20 @@ class SuggestionMixin:
         return False
 
     def _module_member_names(self, module_name):
-        directory = (
-            os.path.dirname(self.file_name) if self.file_name else ""
-        ) or os.getcwd()
+        directory = self._file_directory()
         cache_key = (directory, module_name)
-        if cache_key not in self._import_members_cache:
+        if cache_key not in self._suggestion_caches.import_members:
             python_path = self._resolve_python_executable()
             jedi_pool = _jedi_completions(
                 "\n".join(self.lines), self.file_name,
                 self.line + 1, self.column, python_path,
             )
-            self._import_members_cache[cache_key] = jedi_pool or (
+            self._suggestion_caches.import_members[cache_key] = jedi_pool or (
                 _introspect_module_members(
                     directory, module_name, python_path
                 )
             )
-        return self._import_members_cache[cache_key]
+        return self._suggestion_caches.import_members[cache_key]
 
     def _preceding_identifier(self, dot_index):
         """The bare name right before `line[dot_index]` (a '.'), e.g.
@@ -862,13 +582,14 @@ class SuggestionMixin:
         never invalidated mid-session, so an edit far above a `name.`
         already completed once won't be picked up until Mini restarts."""
         cache_key = (id(self.lines), self.line, dot_index)
-        if cache_key not in self._jedi_attribute_cache:
+        caches = self._suggestion_caches
+        if cache_key not in caches.jedi_attribute:
             python_path = self._resolve_python_executable()
-            self._jedi_attribute_cache[cache_key] = _jedi_completions(
+            caches.jedi_attribute[cache_key] = _jedi_completions(
                 "\n".join(self.lines), self.file_name,
                 self.line + 1, self.column, python_path,
             )
-        return self._jedi_attribute_cache[cache_key]
+        return caches.jedi_attribute[cache_key]
 
     def _infer_attribute_pool(self, name):
         """Names to offer for `name.<TAB>`, narrowed to name's actual
@@ -900,18 +621,16 @@ class SuggestionMixin:
         if found is None:
             return None
         module_name, original_name = found
-        directory = (
-            os.path.dirname(self.file_name) if self.file_name else ""
-        ) or os.getcwd()
+        directory = self._file_directory()
         cache_key = (directory, module_name, original_name)
-        if cache_key not in self._import_members_cache:
-            self._import_members_cache[cache_key] = (
+        if cache_key not in self._suggestion_caches.import_members:
+            self._suggestion_caches.import_members[cache_key] = (
                 _introspect_class_members(
                     directory, module_name, original_name,
                     self._resolve_python_executable(),
                 )
             )
-        return self._import_members_cache[cache_key]
+        return self._suggestion_caches.import_members[cache_key]
 
     def _suggestion_pools(self, prefix_start, line, prefix):
         context_before = line[:prefix_start]
@@ -986,13 +705,7 @@ class SuggestionMixin:
                 return []
             pools = self._suggestion_pools(prefix_start, line, prefix)
         for pool in pools:
-            matches = sorted(
-                (
-                    word for word in pool
-                    if word != prefix and word.startswith(prefix)
-                ),
-                key=len,
-            )
+            matches = _matches_by_prefix(pool, prefix)
             if matches:
                 return matches
         return []
@@ -1014,7 +727,7 @@ class SuggestionMixin:
             # needed (however much later that ends up being, even
             # back on this exact same line index), in case what this
             # line names just changed.
-            self._word_pool_line_index = -1
+            self._suggestion_caches.word_pool_line_index = -1
         if self.column < len(line) and _is_word_char(line[self.column]):
             return []
         # Checked before the generic inside-a-string test below: the
@@ -1043,14 +756,7 @@ class SuggestionMixin:
                 headers = _system_header_names(language == "cpp")
             else:
                 headers = self._local_header_names()
-            return sorted(
-                (
-                    name for name in headers
-                    if name != already_typed
-                    and name.startswith(already_typed)
-                ),
-                key=len,
-            )
+            return _matches_by_prefix(headers, already_typed)
         if _is_inside_c_string_or_comment(line, self.column):
             return []
         prefix = self._current_word_prefix()
@@ -1068,13 +774,7 @@ class SuggestionMixin:
             | self._included_header_words_matching(prefix),
             vocabulary | type_names | literals,
         ):
-            matches = sorted(
-                (
-                    word for word in pool
-                    if word != prefix and word.startswith(prefix)
-                ),
-                key=len,
-            )
+            matches = _matches_by_prefix(pool, prefix)
             if matches:
                 return matches
         return []

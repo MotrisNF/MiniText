@@ -106,10 +106,7 @@ class TabsMixin:
         the "Close Mini" button, once already down to a lone blank
         tab) still works exactly as before to quit."""
         if len(self.tabs) <= 1:
-            if (
-                self.file_name is None and self.lines == [""]
-                and not self.modified
-            ):
+            if self._is_blank_buffer():
                 self.running = False
                 return
             self._apply_buffer_state(self._blank_buffer_state())
@@ -177,10 +174,9 @@ class TabsMixin:
     def _open_config_file(self):
         path = theme.RC_PATH
         existing_tab = self._find_tab_for_path(path)
-        is_blank = self.lines == [""] and not self.modified
         if existing_tab is not None:
             self._switch_to_tab(existing_tab)
-        elif self.file_name is None and is_blank:
+        elif self._is_blank_buffer():
             self._load_file(path)
         else:
             self._open_in_new_tab(path)

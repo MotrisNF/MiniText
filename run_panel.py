@@ -100,7 +100,11 @@ class RunPanelMixin:
         if save_first and (self.modified or self.file_name is None):
             if not self._save():
                 return
-        master_fd, slave_fd = pty.openpty()
+        try:
+            master_fd, slave_fd = pty.openpty()
+        except OSError as error:
+            self.status = f"Could not run: {error}"
+            return
         try:
             process = subprocess.Popen(
                 command,
@@ -126,11 +130,21 @@ class RunPanelMixin:
         self.run_view_start = None
         terminal.set_run_output_fd(master_fd)
 
-    def _start_run(self):
+    def _require_python_file(self, action_label):
+        """`_start_run`/`_start_lint`'s shared guard - both only ever
+        make sense for a .py file, and differ only in which word goes
+        into the status message when there isn't one. Returns the
+        resolved interpreter path, or None (after setting
+        self.status) if there's nothing to run/lint."""
         if not self._is_python_file():
-            self.status = "Can only run .py files"
+            self.status = f"Can only {action_label} .py files"
+            return None
+        return self._resolve_python_executable()
+
+    def _start_run(self):
+        python_path = self._require_python_file("run")
+        if python_path is None:
             return
-        python_path = self._resolve_python_executable()
         self._start_process(
             [python_path, os.path.basename(self.file_name)],
             f"{python_path} {self.file_name}",
@@ -138,10 +152,9 @@ class RunPanelMixin:
         )
 
     def _start_lint(self):
-        if not self._is_python_file():
-            self.status = "Can only lint .py files"
+        python_path = self._require_python_file("lint")
+        if python_path is None:
             return
-        python_path = self._resolve_python_executable()
         name = shlex.quote(os.path.basename(self.file_name))
         # --python-executable makes mypy resolve imports/stubs against
         # the project's own interpreter regardless of *which* mypy
@@ -261,8 +274,6 @@ class RunPanelMixin:
             return
         if self.run_process is not None:
             self._finish_run()
-        self.run_process = None
-        self.run_master_fd = None
         self.run_output_lines = []
         self.run_pending_text = ""
         self.run_focused = False

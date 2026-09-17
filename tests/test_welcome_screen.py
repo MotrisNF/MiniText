@@ -7,12 +7,12 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from rendering import (  # noqa: E402
-    RenderMixin, _BANNER_LINES, _WELCOME_SUBTITLE,
+from dialogs import (  # noqa: E402
+    DialogMixin, _BANNER_LINES, _WELCOME_SUBTITLE,
 )
 
 
-class FakeRenderer(RenderMixin):
+class FakeRenderer(DialogMixin):
     pass
 
 

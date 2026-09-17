@@ -21,7 +21,7 @@ class FakePanel(WorktreePanelMixin):
         self.worktree_focused = True
         self.worktree_visible = True
         self.worktree_visible_because_of_focus = False
-        self.worktree_selected_dir = root
+        self.worktree_new_entry_dir = root
         self.worktree_selected_entries = set()
         self._worktree_entries_cache = None
         self.file_name = None
