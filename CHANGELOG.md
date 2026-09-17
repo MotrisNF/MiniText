@@ -3,6 +3,28 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.11.2 - 2026-09-17
+
+- Redrew the welcome banner again: 1.11.1's mechanical downscale of
+  the wide `Banner.txt` prototype turned out unreadable once shrunk
+  down that far. Replaced with a hand-built block-letter wordmark
+  spelling "MiniText" - capitals full height, lowercase at x-height,
+  double-wide pixels for a bolder look - instead of derived from that
+  prototype at all; `Banner.txt` stays as the original, unused
+  reference.
+- Added Ctrl+drag as a second way to multi-select worktree entries,
+  alongside the existing Ctrl+click: holding Ctrl while dragging adds
+  every entry the mouse passes over to the selection (never removes
+  one already added, even if the drag crosses back over it) instead
+  of starting the plain drag's "move this entry" gesture.
+- Redesigned the move/delete confirmation box for more than one file:
+  the file names used to be folded into the prompt itself as a comma-
+  joined string that silently truncated once it got too long to fit
+  on one line. They're now a separate, scrollable list under the
+  prompt (mouse wheel to scroll, a "▲"/"▼" arrow when there's more
+  above/below) - the prompt itself now just states the count, and the
+  Yes/No buttons are unchanged.
+
 ## 1.11.1 - 2026-09-17
 
 - Fixed Ctrl+click-selecting the worktree entry that was already the

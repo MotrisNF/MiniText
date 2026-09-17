@@ -224,12 +224,14 @@ class WorktreePanelMixin:
         else:
             targets = [(path, name, is_directory, None)]
         if len(targets) > 1:
-            names = ", ".join(target[1] for target in targets)
-            prompt = f"Delete {len(targets)} items ({names})? (y/n)"
+            names = [target[1] for target in targets]
+            prompt = f"Delete {len(targets)} items? (y/n)"
+            confirmed = self._confirm(prompt, names)
         else:
             kind = "folder" if targets[0][2] else "file"
             prompt = f"Delete {kind} '{targets[0][1]}'? (y/n)"
-        if not self._confirm(prompt):
+            confirmed = self._confirm(prompt)
+        if not confirmed:
             self.status = "Cancelled"
             return
         deleted, errors = [], []
@@ -281,6 +283,21 @@ class WorktreePanelMixin:
             return None
         path, _, is_directory, _ = entries[entry_index]
         return path, is_directory
+
+    def _worktree_ctrl_drag_select(self, panel_row):
+        """Adds whichever entry sits at `panel_row` to the multi-
+        selection - called on every MOUSE_DRAG while a Ctrl+press-
+        started paint-select (`self._worktree_ctrl_drag_active`, armed
+        in `_handle_mouse_event`) is in progress, so dragging with
+        Ctrl held paints a selection across every row the mouse passes
+        over (see bugs_conocidos.md: "Ctrl + arrastrar raton ...
+        permite seleccion multiple de archivos"). Only ever adds -
+        never toggles back off, so passing back over an already-
+        selected row mid-drag can't accidentally deselect it - and is
+        a silent no-op past the last real entry."""
+        entry = self._worktree_entry_at_row(panel_row)
+        if entry is not None:
+            self.worktree_selected_entries.add(entry[0])
 
     def _update_worktree_drag_status(self, panel_row):
         """Live feedback while dragging a worktree entry (mouse mode
@@ -343,11 +360,19 @@ class WorktreePanelMixin:
             sorted(self.worktree_selected_entries)
             if origin in self.worktree_selected_entries else [origin]
         )
-        names = ", ".join(os.path.basename(path) for path in sources)
+        names = [os.path.basename(path) for path in sources]
         destination_label = (
             os.path.basename(destination_dir) or destination_dir
         )
-        if not self._confirm(f"Move {names} to '{destination_label}'? (y/n)"):
+        if len(names) > 1:
+            prompt = (
+                f"Move {len(names)} items to '{destination_label}'? (y/n)"
+            )
+            confirmed = self._confirm(prompt, names)
+        else:
+            prompt = f"Move {names[0]} to '{destination_label}'? (y/n)"
+            confirmed = self._confirm(prompt)
+        if not confirmed:
             self.status = "Cancelled"
             return
         moved, errors = [], []
@@ -515,7 +540,8 @@ class WorktreePanelMixin:
             is_multi_selected = path in self.worktree_selected_entries
             if is_cursor and is_multi_selected:
                 base_color, base_close = (
-                    theme.WORD_MATCH_START + theme.CURRENT_LINE_INDICATOR_COLOR,
+                    theme.WORD_MATCH_START
+                    + theme.CURRENT_LINE_INDICATOR_COLOR,
                     theme.WORD_MATCH_END + theme.COLOR_RESET,
                 )
             elif is_cursor:

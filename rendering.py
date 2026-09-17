@@ -37,24 +37,31 @@ _CLOSE_HOVER_COLOR = "\x1b[91m"
 
 # The welcome screen's own banner - shown above the "Close Mini"
 # button on the blank/unnamed/unmodified last-tab screen, mouse
-# enabled or not. Mechanically downscaled from the original 133x12
-# (trimmed) prototype in Banner.txt down to a 79x8 box - each output
-# cell is the most common non-space character across the block of the
-# original art it maps to (left blank below a 25% density threshold) -
-# so it's a faithful shrink of that same artwork rather than a
-# hand-redrawn replacement (see bugs_conocidos.md; Banner.txt itself
-# is kept untouched as the original).
+# enabled or not. A hand-built block-letter wordmark spelling
+# "MiniText", not derived from Banner.txt (mechanically downscaling
+# that wider prototype - the previous approach - shrank it down to an
+# unreadable blob; see bugs_conocidos.md). Banner.txt itself is kept
+# untouched as the original prototype, just no longer the render's own
+# source. Capitals (M, T) stand the full 5 rows tall; lowercase
+# letters only occupy the bottom 3 (a plain x-height/baseline split,
+# "i"'s dot sitting in the 2 rows above it) - each pixel is drawn as 2
+# characters wide for a bolder, more legible look at normal terminal
+# font sizes.
 _BANNER_LINES = (
-    "    %                                                                   #%",
-    "   %%%  %%%%  %%%%           %%%%  %%%%%%%%%%%%%%%                      #%#",
-    "   %%%. .%%%                     %%%%   %%%                           %%%%%%%%%",
-    "  %%%%%%%%%%        %% %%%%             %%%       %%%%%%-   %%%   %%% %%%%%",
-    "  %% %%%% %%   =%   %%%%+%%   %%        %%%      %%%  :%:    :%%%%%      %%",
-    "=%%    %# %%    %%  %%%%  %.  %%.       %%%      %%%%%%%     %%%%%       %%  %%",
-    "%%=       -%#   %%  %%    :%  %%#       %%%      %%%       %%%% %%%%     %%  %%",
-    " %         %%%  %+         %  %%        %%%       %%%%%%%%+%%%    %%     %%%%%",
+    "██      ██  ██          ██  ██████████                        ",
+    "████  ████                      ██                        ██  ",
+    "██  ██  ██  ██  ██████  ██      ██      ██████  ██  ██  ██████",
+    "██      ██  ██  ██  ██  ██      ██      ██████    ██      ██  ",
+    "██      ██  ██  ██  ██  ██      ██      ██      ██  ██    ██  ",
 )
 _WELCOME_SUBTITLE = "Open a file to start"
+
+# Longest a confirm dialog's own file list (see `_confirm_box_geometry`)
+# ever shows at once before it scrolls instead - large enough that the
+# common "handful of selected files" case never needs to scroll, small
+# enough that the box doesn't dwarf the editor pane behind it even on
+# a tall terminal.
+_CONFIRM_MAX_VISIBLE_ITEMS = 8
 
 
 def _inline_tab_positions(line):
@@ -742,6 +749,8 @@ class RenderMixin:
             self._confirm_box_geometry(
                 code_area_left, code_area_width, editor_rows,
                 self._confirm_dialog["prompt"],
+                self._confirm_dialog.get("items"),
+                self._confirm_dialog.get("scroll", 0),
             ) if theme.MOUSE_ENABLED and self._confirm_dialog is not None
             else None
         )
@@ -1319,7 +1328,8 @@ class RenderMixin:
         ]
 
     def _confirm_box_geometry(
-        self, area_left, area_width, editor_rows, prompt
+        self, area_left, area_width, editor_rows, prompt, items=None,
+        scroll=0,
     ):
         """Where a y/n confirmation (see commands.py's `_confirm`)
         lands this frame, mouse mode only - same centered-box
@@ -1332,27 +1342,70 @@ class RenderMixin:
         `close_col`.
 
         Unlike the name dialog, `prompt` here isn't bounded by
-        anything Mini controls (it can list several dragged file
-        names) - `box_width` is clamped to `area_width` rather than
-        requiring the box to fully fit it, so a long prompt truncates
-        (`_render_confirm_box` already does this for its own text)
-        instead of silently drawing no box at all while `_confirm`
-        keeps blocking on `y`/`n`/`Esc` with nothing on screen to show
-        for it. Only genuinely too-narrow buttons (`area_width` itself
-        smaller than the Yes/No row) still return None outright -
-        nothing sensible to clamp to at that point."""
+        anything Mini controls (it can list several dragged/deleted
+        file names) - `box_width` is clamped to `area_width` rather
+        than requiring the box to fully fit it, so a long prompt
+        truncates (`_render_confirm_box` already does this for its own
+        text) instead of silently drawing no box at all while
+        `_confirm` keeps blocking on `y`/`n`/`Esc` with nothing on
+        screen to show for it. Only genuinely too-narrow buttons
+        (`area_width` itself smaller than the Yes/No row) still return
+        None outright - nothing sensible to clamp to at that point.
+
+        `items`, when given (more than one file moved/deleted at
+        once - see worktree.py's `_worktree_delete`/
+        `_handle_worktree_drop`), is shown as its own scrollable list
+        between the prompt and the buttons instead of being folded
+        into `prompt` itself as a comma-joined string - that was the
+        old approach, and it just truncated once the names didn't fit
+        on one line (see bugs_conocidos.md). At most
+        `_CONFIRM_MAX_VISIBLE_ITEMS` rows show at once, further
+        clamped down to whatever `editor_rows` actually leaves room
+        for; `scroll` (persisted on `_confirm`'s own
+        `self._confirm_dialog`, the only thing that survives between
+        one frame and the next while the dialog is up) picks which
+        window of `items` that is, and is clamped here right back into
+        range in case the terminal got shorter since it was last
+        changed. `has_more_above`/`has_more_below` record whether that
+        window is hiding items off either end, for `_render_confirm_
+        box` to draw a "there's more" arrow for."""
         yes_text, gap, no_text = "[ Yes ]", "   ", "[ No ]"
         buttons_text = yes_text + gap + no_text
         min_width = len(buttons_text) + 4
+        content_lengths = [len(prompt)]
+        if items:
+            content_lengths.extend(len(item) for item in items)
         box_width = min(
-            max(len(prompt) + 4, min_width, 24), max(area_width, min_width)
+            max(max(content_lengths) + 4, min_width, 24),
+            max(area_width, min_width),
         )
+        non_list_rows = 4  # top border, prompt, buttons, bottom border
+        if items:
+            visible_rows = min(len(items), _CONFIRM_MAX_VISIBLE_ITEMS)
+            available_for_list = editor_rows - non_list_rows
+            if available_for_list < visible_rows:
+                visible_rows = max(1, available_for_list)
+        else:
+            visible_rows = 0
+        box_height = non_list_rows + visible_rows
         box = self._centered_box_geometry(
-            area_left, area_width, editor_rows, box_width, 4
+            area_left, area_width, editor_rows, box_width, box_height
         )
         if box is None:
             return None
         box["prompt"] = prompt
+        box["items"] = items or []
+        box["visible_rows"] = visible_rows
+        if items:
+            max_scroll = max(0, len(items) - visible_rows)
+            scroll = max(0, min(scroll, max_scroll))
+        else:
+            scroll = 0
+        box["scroll"] = scroll
+        box["has_more_above"] = bool(items) and scroll > 0
+        box["has_more_below"] = (
+            bool(items) and scroll + visible_rows < len(items)
+        )
         inner_width = box["width"] - 2
         left_pad = (inner_width - len(buttons_text)) // 2
         # +1: box["left"] is the column of the border itself ("│"),
@@ -1362,8 +1415,54 @@ class RenderMixin:
         box["yes_col_end"] = buttons_left0 + len(yes_text) - 1
         box["no_col_start"] = box["yes_col_end"] + len(gap) + 1
         box["no_col_end"] = box["no_col_start"] + len(no_text) - 1
-        box["buttons_row_offset"] = box["top_row_offset"] + 2
+        box["buttons_row_offset"] = (
+            box["top_row_offset"] + 2 + visible_rows
+        )
         return box
+
+    def _render_confirm_list_rows(self, box, list_top_row):
+        """The scrollable file-list rows between `_render_confirm_
+        box`'s own prompt and buttons rows - one row per currently
+        visible item (`box["scroll"]`..`+box["visible_rows"]`, both
+        set by `_confirm_box_geometry`), each truncated with an
+        ellipsis rather than wrapped, the same "one line per entry,
+        clipped if it doesn't fit" treatment `_render_name_dialog_box`
+        already gives its own single input line. The last column of
+        each row is reserved for a "▲"/"▼" scroll arrow (a combined
+        "↕" when a single visible row is hiding items on both ends -
+        only possible on a very short terminal, but still needs to
+        pick one glyph over the other) rather than spending a whole
+        extra row on it, so the list itself doesn't shrink just to
+        make room for its own scroll hint."""
+        left, width = box["left"], box["width"]
+        color = theme.SUGGESTION_COLOR
+        items, scroll = box["items"], box["scroll"]
+        visible_rows = box["visible_rows"]
+        content_width = width - 2 - 2
+        lines = []
+        for offset in range(visible_rows):
+            item_index = scroll + offset
+            name = items[item_index] if item_index < len(items) else ""
+            if len(name) > content_width:
+                name = name[:max(0, content_width - 1)] + "…"
+            is_first, is_last = offset == 0, offset == visible_rows - 1
+            top_arrow = is_first and box["has_more_above"]
+            bottom_arrow = is_last and box["has_more_below"]
+            if top_arrow and bottom_arrow:
+                indicator = "↕"
+            elif top_arrow:
+                indicator = "▲"
+            elif bottom_arrow:
+                indicator = "▼"
+            else:
+                indicator = " "
+            row_text = "│ " + name.ljust(content_width) + indicator + "│"
+            row = list_top_row + offset
+            lines.append(
+                f"\x1b[{row};{left + 1}H{color}{row_text}"
+                f"{theme.BASE_STYLE}"
+            )
+        return lines
 
     def _render_confirm_box(self, box, dialog):
         left, width = box["left"], box["width"]
@@ -1393,16 +1492,27 @@ class RenderMixin:
         )
         buttons_row = f"│{buttons_inner}│"
         bottom_border = "└" + "─" * (width - 2) + "┘"
-        return [
+        visible_rows = box.get("visible_rows", 0)
+        buttons_row_index = top_row + 2 + visible_rows
+        lines = [
             f"\x1b[{top_row};{left + 1}H{color}{top_border}"
             f"{theme.BASE_STYLE}",
             f"\x1b[{top_row + 1};{left + 1}H{color}{prompt_row}"
             f"{theme.BASE_STYLE}",
-            f"\x1b[{top_row + 2};{left + 1}H{color}{buttons_row}"
-            f"{theme.BASE_STYLE}",
-            f"\x1b[{top_row + 3};{left + 1}H{color}{bottom_border}"
-            f"{theme.BASE_STYLE}",
         ]
+        if visible_rows:
+            lines.extend(
+                self._render_confirm_list_rows(box, top_row + 2)
+            )
+        lines.append(
+            f"\x1b[{buttons_row_index};{left + 1}H{color}{buttons_row}"
+            f"{theme.BASE_STYLE}"
+        )
+        lines.append(
+            f"\x1b[{buttons_row_index + 1};{left + 1}H{color}"
+            f"{bottom_border}{theme.BASE_STYLE}"
+        )
+        return lines
 
     def _mouse_target(self, column, row):
         """What's at 1-indexed screen (column, row) as of the last
@@ -1492,8 +1602,15 @@ class RenderMixin:
             elif kind == "MOUSE_RELEASE":
                 self._worktree_drag_origin = None
                 self._worktree_drag_target = None
+                self._worktree_ctrl_drag_active = False
             return
         region = target[0]
+        if kind == "MOUSE_RELEASE" and region != "sidebar":
+            # A Ctrl+drag paint-select (armed below, on a sidebar
+            # MOUSE_PRESS) releasing outside the sidebar it started
+            # in - same "just stop" as releasing inside it, just
+            # without sidebar's own MOUSE_RELEASE branch to do it.
+            self._worktree_ctrl_drag_active = False
         if kind == "MOUSE_MOVE":
             self._hovered_worktree_button = (
                 target[1] if region == "sidebar_button" else None
@@ -1531,14 +1648,31 @@ class RenderMixin:
                     self._worktree_delete_by_index(delete_index)
                 else:
                     entry = self._worktree_entry_at_row(target[1])
+                    # A Ctrl+press starts a paint-select drag instead
+                    # of the plain drag's "move this entry" one - see
+                    # bugs_conocidos.md: "Ctrl + arrastrar ... permite
+                    # seleccion multiple" - so it must never also arm
+                    # _worktree_drag_origin, or releasing it later
+                    # would try to move whatever was under the mouse
+                    # on top of having just multi-selected it.
+                    self._worktree_ctrl_drag_active = (
+                        ctrl_held and entry is not None
+                    )
                     self._worktree_drag_origin = (
-                        entry[0] if entry is not None else None
+                        entry[0]
+                        if entry is not None and not ctrl_held else None
                     )
                     self._handle_worktree_click(target[1], ctrl_held)
             elif kind == "MOUSE_DRAG":
-                self._update_worktree_drag_status(target[1])
+                if self._worktree_ctrl_drag_active:
+                    self._worktree_ctrl_drag_select(target[1])
+                else:
+                    self._update_worktree_drag_status(target[1])
             elif kind == "MOUSE_RELEASE":
-                self._handle_worktree_drop(target[1])
+                if self._worktree_ctrl_drag_active:
+                    self._worktree_ctrl_drag_active = False
+                else:
+                    self._handle_worktree_drop(target[1])
             elif kind == "MOUSE_WHEEL_UP":
                 self.worktree_cursor = max(0, self.worktree_cursor - 3)
             elif kind == "MOUSE_WHEEL_DOWN":

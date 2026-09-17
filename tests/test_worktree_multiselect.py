@@ -111,6 +111,24 @@ def test_rendering_a_multiselected_row_does_not_crash():
         assert lines[2].endswith(theme.WORD_MATCH_END)
 
 
+def test_ctrl_drag_paints_a_selection_across_every_row_it_crosses():
+    """Covers bugs_conocidos.md: 'Pulsar Ctrl + arrastrar raton pulsado
+    sobre los archivos permite seleccion multiple de archivos.'"""
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
+        open(os.path.join(tmp, "b.txt"), "w", encoding="utf-8").close()
+        open(os.path.join(tmp, "c.txt"), "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        a_path, b_path, c_path = (
+            os.path.join(tmp, name) for name in ("a.txt", "b.txt", "c.txt")
+        )
+        fake._worktree_ctrl_drag_select(1)  # a.txt
+        fake._worktree_ctrl_drag_select(2)  # b.txt
+        fake._worktree_ctrl_drag_select(2)  # passing back over b.txt again
+        fake._worktree_ctrl_drag_select(3)  # c.txt
+        assert fake.worktree_selected_entries == {a_path, b_path, c_path}
+
+
 def test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too():
     """Covers bugs_conocidos.md: 'El archivo que esta resaltado no se
     selecciona' - Ctrl+clicking the cursor's own row used to leave the
@@ -133,5 +151,6 @@ TESTS = [
     test_plain_click_on_an_unselected_entry_clears_the_multiselection,
     test_plain_click_on_an_already_selected_entry_preserves_it,
     test_rendering_a_multiselected_row_does_not_crash,
+    test_ctrl_drag_paints_a_selection_across_every_row_it_crosses,
     test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too,
 ]

@@ -151,7 +151,7 @@ class CommandMixin:
             self.status = f"{label}: {value}"
             self._render()
 
-    def _confirm(self, prompt):
+    def _confirm(self, prompt, items=None):
         """Blocking y/n prompt. With the mouse on, drawn as its own
         centered box with Yes/No buttons (see rendering.py's
         `_confirm_box_geometry`/`_render_confirm_box`), the same
@@ -159,8 +159,23 @@ class CommandMixin:
         `_prompt_name_dialog`'s new-file/new-folder name box - `y`/
         `Y`/`n`/`N`/`Esc` still work exactly as before either way, so
         a keyboard-only session (or `MOUSE_ENABLED=False`) sees no
-        change at all."""
-        self._confirm_dialog = {"prompt": prompt, "hovered": None}
+        change at all.
+
+        `items`, when a caller passes one (worktree.py's
+        `_worktree_delete`/`_handle_worktree_drop`, only once more
+        than one file is involved - a single name still just goes
+        into `prompt` itself), is shown as its own scrollable list
+        rather than folded into `prompt` as a comma-joined string that
+        silently truncated once it stopped fitting on one line (see
+        bugs_conocidos.md). `scroll` lives here on `_confirm_dialog`,
+        not as a plain local, precisely because it has to survive from
+        one `_render()` call to the next while this loop keeps
+        blocking on the following `read_key()` - the same reason
+        `hovered` already does."""
+        self._confirm_dialog = {
+            "prompt": prompt, "hovered": None, "items": items or None,
+            "scroll": 0,
+        }
         self.status = prompt
         try:
             while True:
@@ -188,7 +203,10 @@ class CommandMixin:
         tracked on `self._confirm_dialog` itself, the same as
         `_prompt_name_dialog`'s "×" hover lives on `self._name_dialog`,
         since that's what `render` already threads through to
-        `_render_confirm_box`."""
+        `_render_confirm_box`. A wheel event instead scrolls the
+        dialog's own file list (when it has one) and always returns
+        None - the dialog only ever closes on Yes/No or a keyboard
+        `y`/`n`/`Esc`, never on a scroll."""
         kind, _, rest = key.partition(":")
         column_text, _, remainder = rest.partition(":")
         row_text, _, _modifier = remainder.partition(":")
@@ -199,6 +217,23 @@ class CommandMixin:
         layout = self._mouse_layout
         box = layout.get("confirm_box") if layout else None
         if box is None:
+            return None
+        if kind in ("MOUSE_WHEEL_UP", "MOUSE_WHEEL_DOWN"):
+            # Scrolls regardless of where over the screen the wheel
+            # moved - `_confirm` blocks on nothing but this dialog
+            # while it's up, so unlike the sidebar/run-output panels
+            # (which share the screen with the editor and only scroll
+            # under the mouse) there's no other region a wheel event
+            # here could sensibly mean.
+            items = box.get("items") or []
+            visible_rows = box.get("visible_rows", 0)
+            max_scroll = max(0, len(items) - visible_rows)
+            if max_scroll > 0:
+                delta = -1 if kind == "MOUSE_WHEEL_UP" else 1
+                current = self._confirm_dialog.get("scroll", 0)
+                self._confirm_dialog["scroll"] = max(
+                    0, min(max_scroll, current + delta)
+                )
             return None
         row_offset = row - 2
         column0 = column - 1

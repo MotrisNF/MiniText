@@ -1,9 +1,24 @@
-El banner que hay en la pantalla inicial no se parece en nada al banner que propuse como prototipo. Es necesario darle una vuelta.
+El banner que se muestra es practicamente ilegible. Necesito una version mucho mas legible y profesional que mantenga este formato:
+MiniText
 
-Al pasar el cursor sobre archivos en el worktree con el modo oouse ennabled, es necesario que se resalten minimamente para dar feedback al usuario.
+La box que se muestra al mover varios archivos o eliminarlos, si la cantidad de archivos es grande y no caben dentro de la box, se truncan.
+Valorar cambiar esa box a una con el siguiente formato
+Move the next files/folders to dir_name? (O lo que tu consideres):
 
-El desplazar un archivo para cambiarlo de carpeta no da ningun tipo de feedbac, hay que hacer algo para que el usuario sepa que esta realizando una accion. Ofrecepe opciones para solucionar esto.
+file1
+file2
+File3
+...
+FileN
 
-La seleccion multiple no funciona correctamente. El archivo que esta resaltado no se selecciona, lo que causa que a veces no se pueda seleccionar de forma adecuada los archivos que quieres
+(Permitiendo desplazar hacia abajo con la rueda del raton si hay mas archivos, y mostrando una flechita o algun simbolo indicando que hay mas hacia abajo)
 
-Un bug que se producia ayer y no fuiste capaz de replicar ya se donde sucede exactamente. Al dal al boton de crear archivo o directorio, la caja que se genera al igual que las de desplazar etc, dejan su silueta en el buffer, esa zona no se rfresca solo lo esta haciendo el boton de close mini
+mismo yes no que ahora
+
+
+
+
+
+Pulsar Ctrl + arrastrar raton pulsado sobre los archivos permite seleccion multiple de archivos.
+
+

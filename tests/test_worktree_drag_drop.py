@@ -22,9 +22,11 @@ class FakePanel(WorktreePanelMixin):
         self.status = ""
         self.file_name = None
         self.confirm_calls = []
+        self.confirm_items = []
 
-    def _confirm(self, prompt):
+    def _confirm(self, prompt, items=None):
         self.confirm_calls.append(prompt)
+        self.confirm_items.append(items)
         return True
 
     def _row_for(self, name):
@@ -86,6 +88,25 @@ def test_dropping_a_multiselection_moves_every_selected_entry():
         assert fake.worktree_selected_entries == set()
 
 
+def test_dropping_a_multiselection_sends_names_as_a_list():
+    """Covers bugs_conocidos.md: a comma-joined names string in the
+    prompt itself used to truncate once it got long - `_confirm` now
+    gets the names as their own `items` list instead, with just the
+    count in the prompt text."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.mkdir(os.path.join(tmp, "sub"))
+        a_path = os.path.join(tmp, "a.txt")
+        b_path = os.path.join(tmp, "b.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        open(b_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake.worktree_selected_entries = {a_path, b_path}
+        fake._worktree_drag_origin = a_path
+        fake._handle_worktree_drop(fake._row_for("sub"))
+        assert fake.confirm_calls == ["Move 2 items to 'sub'? (y/n)"]
+        assert fake.confirm_items == [["a.txt", "b.txt"]]
+
+
 def test_dragging_over_a_target_sets_status_and_drag_target():
     """Covers bugs_conocidos.md: 'El desplazar un archivo ... no da
     ningun tipo de feedback' - dragging now names the file being moved
@@ -111,5 +132,6 @@ TESTS = [
     test_drop_on_a_file_moves_to_its_parent_directory,
     test_dropping_an_entry_on_itself_is_a_silent_no_op,
     test_dropping_a_multiselection_moves_every_selected_entry,
+    test_dropping_a_multiselection_sends_names_as_a_list,
     test_dragging_over_a_target_sets_status_and_drag_target,
 ]

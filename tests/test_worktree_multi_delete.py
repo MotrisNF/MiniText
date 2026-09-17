@@ -21,9 +21,11 @@ class FakePanel(WorktreePanelMixin):
         self._worktree_entries_cache = None
         self.file_name = None
         self.confirm_calls = []
+        self.confirm_items = []
 
-    def _confirm(self, prompt):
+    def _confirm(self, prompt, items=None):
         self.confirm_calls.append(prompt)
+        self.confirm_items.append(items)
         return True
 
 
@@ -58,7 +60,39 @@ def test_deleting_an_unselected_entry_only_deletes_that_one():
         assert fake.worktree_selected_entries == {b_path}
 
 
+def test_deleting_a_selection_sends_names_as_a_list_not_a_joined_string():
+    """Covers bugs_conocidos.md: a comma-joined names string in the
+    prompt itself used to truncate once it got long - `_confirm` now
+    gets the names as their own `items` list (rendered as a scrollable
+    box, see test_confirm_box.py) instead, with just the count in the
+    prompt text."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a_path = os.path.join(tmp, "a.txt")
+        b_path = os.path.join(tmp, "b.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        open(b_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake.worktree_selected_entries = {a_path, b_path}
+        entries = fake._worktree_entries()
+        fake._worktree_delete(entries)
+        assert fake.confirm_calls == ["Delete 2 items? (y/n)"]
+        assert fake.confirm_items == [["a.txt", "b.txt"]]
+
+
+def test_deleting_a_single_entry_still_uses_the_plain_prompt():
+    with tempfile.TemporaryDirectory() as tmp:
+        a_path = os.path.join(tmp, "a.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        entries = fake._worktree_entries()
+        fake._worktree_delete(entries)
+        assert fake.confirm_calls == ["Delete file 'a.txt'? (y/n)"]
+        assert fake.confirm_items == [None]
+
+
 TESTS = [
     test_deleting_a_selected_entry_deletes_the_whole_selection,
     test_deleting_an_unselected_entry_only_deletes_that_one,
+    test_deleting_a_selection_sends_names_as_a_list_not_a_joined_string,
+    test_deleting_a_single_entry_still_uses_the_plain_prompt,
 ]
