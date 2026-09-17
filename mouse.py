@@ -98,6 +98,7 @@ class MouseMixin:
                 self._hovered_tab_close = None
                 self._hovered_close_mini = False
                 self._hovered_worktree_delete = None
+                self._hovered_worktree_rename = None
                 self._hovered_worktree_row = None
             elif kind == "MOUSE_DRAG":
                 self._worktree_drag_target = None
@@ -123,6 +124,10 @@ class MouseMixin:
             self._hovered_close_mini = region == "close_mini_button"
             self._hovered_worktree_delete = (
                 self._worktree_delete_hit_test(target[1], target[2])
+                if region == "sidebar" else None
+            )
+            self._hovered_worktree_rename = (
+                self._worktree_rename_hit_test(target[1], target[2])
                 if region == "sidebar" else None
             )
             hovered_entry = (

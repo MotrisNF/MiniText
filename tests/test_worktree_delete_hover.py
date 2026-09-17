@@ -9,7 +9,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import theme  # noqa: E402
-from worktree import WorktreePanelMixin, WORKTREE_WIDTH  # noqa: E402
+from worktree import (  # noqa: E402
+    WorktreePanelMixin, WORKTREE_WIDTH, _DELETE_HOVER_COLOR,
+)
 
 
 def _strip_ansi(text):
@@ -26,6 +28,7 @@ class FakePanel(WorktreePanelMixin):
         self.worktree_scroll = 0
         self._worktree_entries_cache = None
         self._hovered_worktree_delete = None
+        self._hovered_worktree_rename = None
         self._hovered_worktree_row = None
         self.worktree_selected_entries = set()
         self._hovered_worktree_button = None
@@ -107,10 +110,42 @@ def test_hovered_row_gets_a_reverse_video_highlight():
         assert "\x1b[7m" not in lines[1]  # a.txt (the cursor) is untouched
 
 
+def test_icons_only_take_their_own_color_precisely_hovered():
+    """Covers the follow-up request: the ✎/× icons used to always show
+    their full rename/delete color as soon as the row was hovered at
+    all - they should only actually turn that color when the mouse is
+    precisely over that one icon's own narrow zone (see
+    _worktree_rename_hit_test/_worktree_delete_hit_test), blending
+    into the row's own color otherwise, the same way `_tab_bar_line`'s
+    own × already behaves."""
+    theme.MOUSE_ENABLED = True
+    with tempfile.TemporaryDirectory() as tmp:
+        a_path = os.path.join(tmp, "a.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake._hovered_worktree_row = a_path
+
+        lines = fake._worktree_body_lines(10)
+        assert theme.CURRENT_LINE_INDICATOR_COLOR not in lines[1]
+        assert _DELETE_HOVER_COLOR not in lines[1]
+
+        fake._hovered_worktree_rename = 1
+        lines = fake._worktree_body_lines(10)
+        assert theme.CURRENT_LINE_INDICATOR_COLOR in lines[1]
+        assert _DELETE_HOVER_COLOR not in lines[1]
+
+        fake._hovered_worktree_rename = None
+        fake._hovered_worktree_delete = 1
+        lines = fake._worktree_body_lines(10)
+        assert theme.CURRENT_LINE_INDICATOR_COLOR not in lines[1]
+        assert _DELETE_HOVER_COLOR in lines[1]
+
+
 TESTS = [
     test_hit_test_only_matches_last_two_columns_of_a_real_entry_row,
     test_hit_test_disabled_without_mouse,
     test_delete_cross_only_shown_on_the_hovered_row,
     test_hover_reveal_is_not_limited_to_the_edge_columns,
     test_hovered_row_gets_a_reverse_video_highlight,
+    test_icons_only_take_their_own_color_precisely_hovered,
 ]

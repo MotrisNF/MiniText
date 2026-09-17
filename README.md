@@ -1,194 +1,72 @@
 # Mini
 
-Mini is a small terminal text editor written in pure Python, with no
-external dependencies. It renders directly with ANSI escape sequences
-in a raw-mode terminal, and includes syntax highlighting, inline
-autocompletion, and a file explorer for Python files, while staying
-usable as a general-purpose text editor for anything else.
+A small terminal text editor written in pure Python, with no external
+dependencies.
+
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Platform: Linux/Unix](https://img.shields.io/badge/platform-Linux%2FUnix-lightgrey)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
+Mini renders directly with ANSI escape sequences in a raw-mode
+terminal, and includes syntax highlighting, type-aware autocompletion,
+and a mouse-friendly file explorer, while staying comfortable to use
+as a general-purpose editor for anything else.
+
+## Table of contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Updating](#updating)
+- [Modes](#modes)
+- [Key reference](#key-reference)
+- [Autocompletion](#autocompletion)
+- [Syntax highlighting](#syntax-highlighting)
+- [Running a file, linting, and shell commands](#running-a-file-linting-and-shell-commands)
+- [Worktree panel](#worktree-panel)
+- [Mouse](#mouse)
+- [Tabs](#tabs)
+- [Configuration](#configuration)
+  - [Elastic tabstops](#elastic-tabstops)
+- [Project structure](#project-structure)
+- [Limitations](#limitations)
+- [License](#license)
 
 ## Features
 
-- Modal editing (Visual and Insert modes), with text selection,
-  copy/paste, undo/redo, and search.
-- Line-oriented commands: jump to a line, copy or delete a specific
-  line by number, and paste a line at a given position.
-- Syntax highlighting for `.py` files: keywords, dunder names
-  (`__init__`, `__name__`, ...), built-in type names, function
-  calls/definitions, string literals (quotes included), and comments,
-  each in its own color. `def` and `class` get a color of their own,
-  separate from the rest of the keywords. A triple-quoted string
-  (`"""..."""` or `'''...'''`) is treated as a comment - same color
-  and all - rather than as a regular string, since that's how it's
-  actually used (a docstring) far more often than not; quote-matching
-  leaves it alone as that one block too, rather than pairing up two
-  of its own three-quote delimiters (or splitting its coloring apart)
-  depending on which quote the cursor happens to land on.
-- Autocompletion for `.py` files, drawing from words already used in
-  the file plus Python's keywords and built-ins, and, after `import`
-  or `from`, standard library modules as well as `.py` files and
-  directories found next to the file being edited - a directory
-  counts whether or not it has an `__init__.py`, since Python can
-  import a plain one as a namespace package too. `from a_package
-  import ` offers both what that package's `__init__.py` actually
-  defines and its submodules/subpackages (the `.py` files and
-  directories inside it), together, since which one you mean depends
-  on what you're about to type. `name.` after an
-  assignment is type-aware: `patata = []` then `patata.app` only
-  offers list methods (`append`, not `str`'s or `dict`'s), and
-  `perro = Perro()` then `perro.la` offers `Perro`'s own methods -
-  whether `Perro` is a class defined right in this file or one
-  imported with `from module import Perro`. `self.` is its own case:
-  it offers the enclosing class's own methods plus every attribute
-  assigned anywhere in it as `self.attr = ...`, found by working out
-  which `class ...:` contains the cursor rather than looking for an
-  assignment (there isn't one - `self` is a parameter, never assigned
-  itself). A string literal works the same way with no assignment at
-  all: `"".up` (or `'x'.up`) offers `str`'s methods directly, since
-  the dot right after a closing quote already says what it is. Beyond
-  `self` and string literals, this only follows a single, literal
-  `name = <expr>` line right before the cursor - no control flow, no
-  return-type inference - and falls back to every builtin type's
-  methods combined when nothing can be worked out. When
-  the type is known this way, typing the `.` itself is enough to open
-  the suggestions - no need to type any letters first, unlike every
-  other completion context here, which needs at least 2.
-  When `make install`'s own virtualenv for Mini has `jedi` in it (see
-  "Installation" below), both `name.` and `from module import ` are
-  tried through it first - real parsing and inference instead of
-  Mini's own regex/`ast` heuristics, so it also covers a chained call
-  (`make().attr`), a subscript (`items[0].attr`), or a return-type-
-  dependent case the heuristics above give up on outright. Whenever
-  jedi can't answer (not installed, or it genuinely finds nothing),
-  the heuristics above run exactly as if jedi didn't exist, so nothing
-  here is a hard requirement.
-  After `from module import `, it
-  offers that module's actual members (`from sys import arg` suggests
-  `argv`) - found by really importing the module in an isolated,
-  short-lived subprocess, so this also works for your own local
-  files, not just the standard library. A single match shows as
-  inline "ghost text" (`Tab` accepts it); two or more open a dropdown
-  below the cursor - `Up`/`Down` move through it, `Tab` accepts the
-  highlighted entry, `Esc` dismisses it without leaving Insert mode.
-  `Enter` always inserts a newline, dropdown or not - it never doubles
-  as an accept key, so finishing a line that happens to still have a
-  dropdown open (`import re` matches `reprlib`/`readline`/... too)
-  never silently rewrites what you already typed. A module's names
-  starting with a single underscore are
-  offered too (only `__dunder__` names are hidden), since a small
-  local file's real API is often just that. Suggestions never trigger
-  inside a string or a comment, so typing free-form text there doesn't
-  get treated as Python code. An `import`/`from ... import ...` line
-  that would actually fail - a module that can't be imported, or a
-  name that doesn't really exist on it - gets the same `●` marker as
-  an overly long line (see `MAX_COLS` below), checked the same way
-  the completion above is: for real, in an isolated subprocess, using
-  the same interpreter `:run`/`:lint` would actually use for this
-  file (an active `VIRTUAL_ENV`, else a `.venv`/`venv`/`env`/`.env`
-  found from the file up to the worktree root, else Mini's own) -
-  never Mini's own interpreter outright, since a package only
-  installed in the project's own virtualenv would otherwise be
-  wrongly flagged as broken. A plain `import` of a top-level standard
-  library module is trusted outright, without spawning anything.
-- Syntax highlighting and autocompletion for `.c`/`.h` and
-  `.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files too, in the same style
-  as `.py` - keywords, built-in type names, preprocessor directives,
-  string/char literals, and comments (both `//` and `/* */` - the
-  same in C and C++) colored, plus word-based completion from
-  the buffer and C's (or C++'s, with its own extra keywords like
-  `class`/`namespace`/`template`) own vocabulary as a fallback. This
-  is deliberately much shallower than the Python side: no type
-  inference, no `self`/`->` awareness, no macro expansion - just
-  words and keywords. `#include "..."` offers `.h`/`.hpp` files next
-  to the one being edited, the same way Python offers local `.py`
-  files after `import`; `#include <...>` instead offers real system
-  header names, found by asking whichever of `gcc`/`clang`/`cc` is on
-  `PATH` for its own include search directories (the same
-  "introspect the real thing" approach as Python's module
-  completion, one layer down) - needing none of them just means this
-  one specific case offers nothing, the same as `:lint` finding
-  neither a project's own `flake8`/`mypy` nor Mini's bundled fallback
-  for them (see "Installation"). Beyond completing the `#include` line
-  itself, every header a file's own `#include`s name - local or
-  system, resolved the exact same way - actually gets read and
-  word-scanned too, so a name declared in one of them (`#include
-  "mine.h"` and it declares `mi_funcion`, or `#include <stdio.h>`
-  and `printf`) is offered while typing anywhere else in the file,
-  not just while completing the `#include` line. An `#include` that
-  doesn't actually resolve - a local header not found next to the
-  file, or a system one not found in the compiler's own include
-  directories - gets the same `●` marker `MAX_COLS` uses for an
-  overly long line, in the same gutter spot. With no `gcc`/`clang`/
-  `cc` on `PATH` at all, a `<...>` include is never marked this way -
-  there'd be no way to tell "doesn't exist" apart from "can't check",
-  and marking every one would be worse than marking none.
-- Matching-bracket and matching-quote highlighting, for `()`, `[]`,
-  `{}`, `'` and `"`, in either direction and across lines.
-- Auto-closing of brackets and quotes - only when the spot to the
-  right is empty, whitespace, or another closing character, so typing
-  one in the middle of existing text doesn't insert a stray partner -
-  with smart backspace: deleting an opening character removes its
-  auto-inserted counterpart too, but only if nothing was typed between
-  them.
-- Auto-indentation on Enter, carrying over the current line's actual
-  indentation - whatever mix of tabs/spaces it already is - and
-  adding one new level (a tab or `TAB_SIZE` spaces, per
-  `INDENT_WITH_TABS`) after a line that actually opens a new block -
-  one starting with `if`/`elif`/`else`/`for`/`while`/`try`/`except`/
-  `finally`/`with`/`def`/`class`/`match`/`case`/`default` and ending
-  in `:` - rather than any line that merely happens to end in `:` (a
-  comment, a docstring line, a dict/annotation, ...), which would
-  otherwise indent one level further on every line just as long as
-  each kept ending in `:` too. Pressing Enter right
-  between a matching pair of brackets (`foo(|)`) instead splits into
-  three lines - the opening line, an empty line indented one level
-  further where the cursor lands, and the closing bracket on its own
-  line back at the original indentation.
-- A worktree file explorer shown as a side panel next to the editor,
-  for browsing, opening, creating, and deleting files and directories
-  without leaving the terminal. Opening a file from the panel always
-  gives it its own tab (switching to it instead if it's already
-  open), so every file you open stays open; `Tab`/`Shift+Tab` cycle
-  forward/backward between open tabs in Visual mode. A tab bar always
-  sits at the very top of the
-  screen, right above the code - the active tab has its own color
-  (`ACTIVE_TAB_COLOR`), clearly distinct from both the editor's own
-  background and the muted shade inactive tabs use, so it stands out
-  as "the one that's open" at a glance, separated by a thin vertical
-  line.
-- `:run` executes the current `.py` file and streams its output live
-  in a split below the code, over a real pty so `input()` works;
-  Ctrl+C interrupts the running program without affecting Mini.
-  `:lint` runs `flake8` and `mypy` on it the same way.
-- A configurable line-length ruler (`MAX_COLS`, default 79 - flake8's
-  own default) drawn on every line that doesn't already reach it;
-  going past it anyway marks that line with a `●` in the gutter. Can
-  be turned off entirely (`MAX_COLS_ENABLED=False`) or overridden per
-  file extension, along with `INDENT_WITH_TABS`/`TAB_SIZE`, through an
-  open-ended `[filetype:.ext]` dictionary in `~/.minirc` - see
-  "Configuration" below.
-- Elastic tabstops: a tab typed after a line's own indentation lines
-  up, purely visually, with the same tab on every adjacent line that
-  has one in the same position - `int` + `Tab` + `c;` above `size_t` +
-  `Tab` + `l;` renders as a neatly aligned two-column table, and stays
-  aligned as lines are added, removed, or edited. See "Configuration"
-  below for the details and one real interaction with Insert mode's
-  autocompletion worth knowing about.
-- A line too long for the terminal's width soft-wraps onto as many
-  extra screen rows as it takes, instead of overflowing into the next
-  row at column 1 (the terminal's own doing, not Mini's, and the
-  usual way this looks broken) or getting cut off. A continuation
-  row's gutter area is left blank rather than repeating the line
-  number, so the text still starts right where a first row's text
-  would - visibly still the same line, continued. This is purely
-  about fitting on screen: moving with the arrow keys, search, and
-  everything else still works a line at a time, not a screen-row at a
-  time.
-- A theme system with three built-in palettes (`base`, `dark`,
-  `light`), fully configurable through a plain-text config file, with
-  an automatic backup that protects against invalid edits.
-- Resize-aware rendering and a clean terminal handoff: the editor uses
-  the terminal's alternate screen buffer, so nothing it draws leaks
-  into your shell's scrollback.
+- **Modal editing** (Visual and Insert modes) with text selection,
+  copy/paste, undo/redo, and search - see [Key reference](#key-reference).
+- **Type-aware autocompletion** for `.py` files (`name.` knows what
+  `name` is), plus word/keyword/`#include` completion for C/C++ - see
+  [Autocompletion](#autocompletion).
+- **Syntax highlighting** for `.py` and C/C++ files, one color per
+  token kind - keywords, types, classes, function parameters, strings,
+  comments - see [Syntax highlighting](#syntax-highlighting).
+- **Bracket- and quote-matching**, in either direction and across
+  lines, with auto-closing and smart backspace.
+- **Auto-indentation** that only triggers on lines actually opening a
+  new block, plus a smart Enter inside `()`/`[]`/`{}`.
+- **A worktree file explorer** panel: browse, open, create, rename,
+  and delete files/directories without leaving the terminal, with full
+  mouse support (click, drag & drop, multi-select) - see
+  [Worktree panel](#worktree-panel) and [Mouse](#mouse).
+- **Run code in place**: `:run` executes the current file with live
+  output over a real pty (`input()` works); `:lint` runs flake8 +
+  mypy the same way - see
+  [Running a file, linting, and shell commands](#running-a-file-linting-and-shell-commands).
+- **Elastic tabstops** and a **configurable line-length ruler**
+  (`MAX_COLS`, with per-file-extension overrides) - see
+  [Configuration](#configuration).
+- **Soft-wrapping** for lines wider than the terminal, instead of the
+  terminal's own broken wraparound.
+- **Three built-in themes** (`base`, `dark`, `light`), fully
+  configurable through a plain-text `~/.minirc`, with an automatic
+  backup that protects against invalid edits.
+- **Self-updating**: an installed Mini checks for new commits and can
+  pull and reinstall itself in place - see [Updating](#updating).
+- Resize-aware rendering on the terminal's alternate screen buffer -
+  nothing Mini draws leaks into your shell's scrollback.
 
 ## Requirements
 
@@ -196,8 +74,8 @@ usable as a general-purpose text editor for anything else.
   ANSI escape sequences and 256 colors.
 - Python 3.10 or newer. No packages need to be installed by hand -
   Mini needs none to run, and `make install` manages its own private
-  copies of the few optional extras it can use (see "Installation"
-  below).
+  copies of the few optional extras it can use (see
+  [Installation](#installation) below).
 
 ## Installation
 
@@ -212,17 +90,17 @@ This installs the `mini` command for the current user:
 - The source files are copied to `~/.local/share/mini`.
 - A private virtualenv for Mini itself is created at
   `~/.local/share/mini/venv`, with `jedi` (better Python completion -
-  see the `name.`/`from module import` description above), `flake8`,
-  and `mypy` (a fallback for `:lint` - see its own description below)
-  installed into it - never into your system Python or any project's
-  own virtualenv. Mini runs from this virtualenv rather than the
-  system `python3` from here on, though it needs nothing in it to
-  work at all. If it can't be created or the packages can't be
-  installed (no network, no `python3-venv` package, ...), Mini falls
-  back to the system `python3` instead, without those extras - either
-  way the install still succeeds. Re-running the installer (as
-  `mini --update` already does) leaves an already-working virtualenv
-  alone rather than recreating it every time.
+  see [Autocompletion](#autocompletion)), `flake8`, and `mypy` (a
+  fallback for `:lint` - see its own description below) installed into
+  it - never into your system Python or any project's own virtualenv.
+  Mini runs from this virtualenv rather than the system `python3` from
+  here on, though it needs nothing in it to work at all. If it can't
+  be created or the packages can't be installed (no network, no
+  `python3-venv` package, ...), Mini falls back to the system `python3`
+  instead, without those extras - either way the install still
+  succeeds. Re-running the installer (as `mini --update` already does)
+  leaves an already-working virtualenv alone rather than recreating it
+  every time.
 - A launcher script is installed at `~/.local/bin/mini`.
 - `~/.local/bin` is added to your `PATH` in `~/.bashrc`, `~/.zshrc`,
   `~/.profile`, and `~/.hellishrc` (whichever exist), if it isn't
@@ -360,7 +238,9 @@ mode bar shows `(Move: ...)` while it's active as a reminder.
 | Delete      | Delete forward (the character under the cursor)            |
 | `Esc`       | Dismiss the suggestion dropdown if one is open, otherwise return to Visual mode |
 
-### Commands (type `:` from Visual mode, then Enter)
+### Commands
+
+Type `:` from Visual mode, then Enter.
 
 | Command       | Action                                              |
 |---------------|-------------------------------------------------------|
@@ -399,7 +279,149 @@ scrolls with `Up`/`Down`/`Ctrl+Up`/`Ctrl+Down` when the reference
 doesn't fit on one screen, with a footer showing how many of its lines
 are currently visible.
 
-### Running a file
+## Autocompletion
+
+### Python
+
+Autocompletion for `.py` files draws from words already used in the
+file plus Python's keywords and built-ins, and, after `import` or
+`from`, standard library modules as well as `.py` files and
+directories found next to the file being edited - a directory counts
+whether or not it has an `__init__.py`, since Python can import a
+plain one as a namespace package too. `from a_package import ` offers
+both what that package's `__init__.py` actually defines and its
+submodules/subpackages (the `.py` files and directories inside it),
+together, since which one you mean depends on what you're about to
+type.
+
+`name.` after an assignment is type-aware: `patata = []` then
+`patata.app` only offers list methods (`append`, not `str`'s or
+`dict`'s), and `perro = Perro()` then `perro.la` offers `Perro`'s own
+methods - whether `Perro` is a class defined right in this file or one
+imported with `from module import Perro`. `self.` is its own case: it
+offers the enclosing class's own methods plus every attribute assigned
+anywhere in it as `self.attr = ...`, found by working out which
+`class ...:` contains the cursor rather than looking for an assignment
+(there isn't one - `self` is a parameter, never assigned itself). A
+string literal works the same way with no assignment at all: `"".up`
+(or `'x'.up`) offers `str`'s methods directly, since the dot right
+after a closing quote already says what it is. Beyond `self` and
+string literals, this only follows a single, literal `name = <expr>`
+line right before the cursor - no control flow, no return-type
+inference - and falls back to every builtin type's methods combined
+when nothing can be worked out. When the type is known this way,
+typing the `.` itself is enough to open the suggestions - no need to
+type any letters first, unlike every other completion context here,
+which needs at least 2.
+
+When `make install`'s own virtualenv for Mini has `jedi` in it (see
+[Installation](#installation)), both `name.` and `from module import `
+are tried through it first - real parsing and inference instead of
+Mini's own regex/`ast` heuristics, so it also covers a chained call
+(`make().attr`), a subscript (`items[0].attr`), or a return-type-
+dependent case the heuristics above give up on outright. Whenever jedi
+can't answer (not installed, or it genuinely finds nothing), the
+heuristics above run exactly as if jedi didn't exist, so nothing here
+is a hard requirement.
+
+After `from module import `, it offers that module's actual members
+(`from sys import arg` suggests `argv`) - found by really importing
+the module in an isolated, short-lived subprocess, so this also works
+for your own local files, not just the standard library. A single
+match shows as inline "ghost text" (`Tab` accepts it); two or more
+open a dropdown below the cursor - `Up`/`Down` move through it, `Tab`
+accepts the highlighted entry, `Esc` dismisses it without leaving
+Insert mode. `Enter` always inserts a newline, dropdown or not - it
+never doubles as an accept key, so finishing a line that happens to
+still have a dropdown open (`import re` matches `reprlib`/`readline`/
+... too) never silently rewrites what you already typed. A module's
+names starting with a single underscore are offered too (only
+`__dunder__` names are hidden), since a small local file's real API is
+often just that.
+
+Suggestions never trigger inside a string or a comment, so typing
+free-form text there doesn't get treated as Python code. An
+`import`/`from ... import ...` line that would actually fail - a
+module that can't be imported, or a name that doesn't really exist on
+it - gets the same `●` marker as an overly long line (see `MAX_COLS`
+in [Configuration](#configuration)), checked the same way the
+completion above is: for real, in an isolated subprocess, using the
+same interpreter `:run`/`:lint` would actually use for this file (an
+active `VIRTUAL_ENV`, else a `.venv`/`venv`/`env`/`.env` found from the
+file up to the worktree root, else Mini's own) - never Mini's own
+interpreter outright, since a package only installed in the project's
+own virtualenv would otherwise be wrongly flagged as broken. A plain
+`import` of a top-level standard library module is trusted outright,
+without spawning anything.
+
+### C/C++
+
+Syntax highlighting and autocompletion also cover `.c`/`.h` and
+`.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files, in the same style as
+`.py` - keywords, built-in type names, preprocessor directives,
+string/char literals, and comments (both `//` and `/* */` - the same
+in C and C++) colored, plus word-based completion from the buffer and
+C's (or C++'s, with its own extra keywords like `class`/`namespace`/
+`template`) own vocabulary as a fallback. This is deliberately much
+shallower than the Python side: no type inference, no `self`/`->`
+awareness, no macro expansion - just words and keywords.
+
+`#include "..."` offers `.h`/`.hpp` files next to the one being
+edited, the same way Python offers local `.py` files after `import`;
+`#include <...>` instead offers real system header names, found by
+asking whichever of `gcc`/`clang`/`cc` is on `PATH` for its own
+include search directories (the same "introspect the real thing"
+approach as Python's module completion, one layer down) - needing
+none of them just means this one specific case offers nothing, the
+same as `:lint` finding neither a project's own `flake8`/`mypy` nor
+Mini's bundled fallback for them (see [Installation](#installation)).
+Beyond completing the `#include` line itself, every header a file's
+own `#include`s name - local or system, resolved the exact same way -
+actually gets read and word-scanned too, so a name declared in one of
+them (`#include "mine.h"` and it declares `mi_funcion`, or `#include
+<stdio.h>` and `printf`) is offered while typing anywhere else in the
+file, not just while completing the `#include` line.
+
+An `#include` that doesn't actually resolve - a local header not
+found next to the file, or a system one not found in the compiler's
+own include directories - gets the same `●` marker `MAX_COLS` uses for
+an overly long line, in the same gutter spot. With no `gcc`/`clang`/
+`cc` on `PATH` at all, a `<...>` include is never marked this way -
+there'd be no way to tell "doesn't exist" apart from "can't check",
+and marking every one would be worse than marking none.
+
+## Syntax highlighting
+
+`.py` files get keywords, dunder names (`__init__`, `__name__`, ...),
+built-in type names, class names, function calls/definitions, a
+function/method definition's own parameter names, string literals
+(quotes included), and comments, each in its own color:
+
+- `def` and `class` themselves get a color of their own
+  (`DECLARATION_COLOR`), separate from the rest of the keywords.
+- A class's own name - both where it's defined (`class Foo:`) and
+  anywhere it's used as a type annotation (`def f(x: Foo)`) - is
+  colored the same as a builtin type name (`TYPE_COLOR`).
+- A function or method definition's own parameter names get their own
+  color (`PARAMETER_COLOR`), separate from a typed parameter's own
+  annotation (which is colored as a type, per the point above) and
+  from a call site's own arguments (which aren't specially colored at
+  all - only a *definition*'s parameters are).
+- A triple-quoted string (`"""..."""` or `'''...'''`) is treated as a
+  comment - same color and all - rather than as a regular string,
+  since that's how it's actually used (a docstring) far more often
+  than not; quote-matching leaves it alone as that one block too,
+  rather than pairing up two of its own three-quote delimiters (or
+  splitting its coloring apart) depending on which quote the cursor
+  happens to land on.
+
+C/C++ files get the same treatment with their own vocabulary - see
+[C/C++](#cc) above for what's shared with autocompletion there.
+
+Every color is configurable per-theme - see
+[Configuration](#configuration).
+
+## Running a file, linting, and shell commands
 
 `:run` (or `:terminal`) saves the current `.py` file, runs it, and
 splits the code area horizontally to show its output live underneath
@@ -439,16 +461,16 @@ same output panel (so it's Ctrl+C-able and closes with `Esc` the same
 way), deleting `.mypy_cache` once both finish. A project's own
 `flake8`/`mypy` (found the same way as above) are always used first;
 failing that, Mini's own bundled copies - installed into its private
-virtualenv alongside jedi (see "Installation") - are tried as a
-fallback, so `:lint` still works for a project with neither. `mypy`
-is always told to resolve imports as the project's own interpreter
-would (`--python-executable`), even when it's Mini's own bundled
-`mypy` doing the checking - so falling back to it still means real
-type-checking against what the project actually has installed,
-instead of "cannot find module" for every third-party import Mini's
-own virtualenv doesn't happen to have. If neither the project nor
-Mini has them (no network at install time, say), `:lint` fails
-outright, same as always.
+virtualenv alongside jedi (see [Installation](#installation)) - are
+tried as a fallback, so `:lint` still works for a project with
+neither. `mypy` is always told to resolve imports as the project's
+own interpreter would (`--python-executable`), even when it's Mini's
+own bundled `mypy` doing the checking - so falling back to it still
+means real type-checking against what the project actually has
+installed, instead of "cannot find module" for every third-party
+import Mini's own virtualenv doesn't happen to have. If neither the
+project nor Mini has them (no network at install time, say), `:lint`
+fails outright, same as always.
 
 `:cmd <text>` runs `text` as a `bash -c` command in that same panel -
 for anything that isn't about running the current file itself
@@ -462,7 +484,7 @@ does (`source some/venv/bin/activate` included) persists into a later
 `:run` or `:cmd`, since that process is already gone by the time the
 next one starts.
 
-### Worktree panel
+## Worktree panel
 
 Focusing the panel with `w` shows it if it was hidden; leaving focus
 (`v`, `Esc`, `:`, or `i`) hides it again in that case, restoring
@@ -505,30 +527,30 @@ being in the editor.
 | `v`, `Esc`     | Return focus to the editor                                     |
 | `:`, `i`       | Return focus to the editor directly in Command or Insert mode  |
 
-With `MOUSE_ENABLED` on (see "Mouse" below), two buttons appear along
+With `MOUSE_ENABLED` on (see [Mouse](#mouse)), two buttons appear along
 the bottom of the panel - `+ New file` and `+ New folder` - the same
 actions as `Ctrl+F`/`Ctrl+D`, clickable directly, highlighting as the
 mouse passes over either one. They take up their own rows (shrinking
 the file list by that many lines) only when actually shown, so nothing
 changes about the panel's layout with the mouse off. Closing a tab is
-done from the tab bar itself instead (see "Tabs").
+done from the tab bar itself instead (see [Tabs](#tabs)).
 
 Either way, the name itself is typed into a box centered in the code
 area (after the gutter, and no wider than the file's own `MAX_COLS`
-when that's on - see "Configuration") rather than on the status line
-at the bottom. With the mouse on, it has its own "×" in the top-right
-corner of its border (turning red on hover) to cancel by clicking;
-`Esc` cancels it either way, mouse on or off.
+when that's on - see [Configuration](#configuration)) rather than on
+the status line at the bottom. With the mouse on, it has its own "×"
+in the top-right corner of its border (turning red on hover) to
+cancel by clicking; `Esc` cancels it either way, mouse on or off.
 
-With `MOUSE_ENABLED` on, the panel also supports per-entry delete on
-hover, `Ctrl`+click multi-selection, and drag & drop to move entries -
-see "Mouse" below for the details.
+With `MOUSE_ENABLED` on, the panel also supports per-entry rename and
+delete on precise hover, `Ctrl`+click multi-selection, and drag & drop
+to move entries - see [Mouse](#mouse) below for the details.
 
-### Mouse
+## Mouse
 
 On by default (`MOUSE_ENABLED=True` in `~/.minirc` - see
-"Configuration"); set it to `False` there to turn it off. Once
-enabled:
+[Configuration](#configuration)); set it to `False` there to turn it
+off. Once enabled:
 
 - Clicking in the code area places the cursor there; from Command,
   Search, or with the worktree/`:run` panel focused, it also switches
@@ -547,7 +569,7 @@ enabled:
   same exception a code-area click has). Clicking the "×" next to a
   tab's name (which turns red as the mouse passes over it) closes that
   tab instead - even one that isn't the active one - prompting to save
-  first if it's modified, exactly like `:q` does (see "Tabs").
+  first if it's modified, exactly like `:q` does (see [Tabs](#tabs)).
 - Clicking in the worktree panel focuses it (the same as pressing
   `w`) and selects whichever entry was clicked; clicking that *same*
   entry again (while the panel was already focused) activates it -
@@ -559,43 +581,53 @@ enabled:
   for a file. Hovering any entry highlights its row in reverse video
   (a minimal "you're pointing at this one" cue, separate from the
   cursor's own indicator) and reveals a "✎"/"×" pair at the right edge
-  of its row; clicking "×" asks for confirmation the same way `Delete`
-  already does, and clicking "✎" opens the same rename box as pressing
-  `r` does. `Ctrl`+click toggles that one entry in/out of a
+  of its row, each only actually taking its own color (amber for
+  rename, red for delete) when the mouse is precisely over that one
+  icon, blending into the row's own color otherwise - so the color
+  itself, not just the icon's presence, tells you a click right here
+  would do something. Clicking "×" asks for confirmation the same way
+  `Delete` already does; clicking "✎" opens the same rename box as
+  pressing `r` does. `Ctrl`+click toggles that one entry in/out of a
   multi-selection (shown with its own background color, combined with
   the cursor's own color if the two ever land on the same row),
   independent of the normal single-entry selection - a plain click
-  always clears it first. Dragging an entry - or a whole `Ctrl`+click
-  selection together, if the one being dragged is part of one - names
-  it in the status line and highlights whichever row the mouse is
-  currently over as the drop zone; releasing onto a directory moves it
-  inside, after confirming; releasing onto a file moves it to that
-  file's own parent directory instead; dropping an entry on itself (a
-  plain click-and-release with no real drag included) is always a
-  silent no-op. The scroll wheel moves the selection up/down a few
-  entries. Two buttons along the bottom of the panel -
-  `+ New file`, `+ New folder` - are clickable directly too, and
-  highlight as the mouse passes over them (see "Worktree panel").
+  always clears it first; `Ctrl`+dragging paints the selection across
+  every row the mouse passes over instead of just one at a time.
+  Dragging an entry - or a whole `Ctrl`+click selection together, if
+  the one being dragged is part of one - names it in the status line
+  and highlights whichever row the mouse is currently over as the drop
+  zone; releasing onto a directory moves it inside, after confirming;
+  releasing onto a file moves it to that file's own parent directory
+  instead; dropping an entry on itself (a plain click-and-release with
+  no real drag included) is always a silent no-op. The scroll wheel
+  moves the selection up/down a few entries. Two buttons along the
+  bottom of the panel - `+ New file`, `+ New folder` - are clickable
+  directly too, and highlight as the mouse passes over them (see
+  [Worktree panel](#worktree-panel)).
 - Scrolling over the `:run`/`:lint`/`:cmd` output panel scrolls it,
   the same as `Up`/`Down` already do there.
 - With the editor down to its last tab, once that tab is blank,
-  unnamed, and unmodified (see "Tabs"), a "Close Mini" button appears,
-  centered in the code area - the only way left to quit with just a
-  mouse, since closing the last tab no longer exits Mini on its own.
+  unnamed, and unmodified (see [Tabs](#tabs)), a "Close Mini" button
+  appears, centered in the code area - the only way left to quit with
+  just a mouse, since closing the last tab no longer exits Mini on its
+  own.
 - Creating a new file or folder (`Ctrl+F`/`Ctrl+D`, or the worktree
   panel's own buttons) prompts for its name in a box centered in the
   code area instead of on the status line, with its own "×" to cancel
-  by clicking (see "Worktree panel").
+  by clicking (see [Worktree panel](#worktree-panel)).
 - Any y/n confirmation (closing a modified tab, deleting a worktree
   entry or a drag & drop move) draws the same way - a box centered in
   the code area, with clickable "Yes"/"No" buttons instead of a plain
-  status-line prompt. `y`/`n`/`Esc` still work from the keyboard too,
-  either way.
-- With `AUTOSAVE=True` too (off by default - see "Configuration"), the
-  current file saves itself automatically - no confirmation, nothing
-  beyond the usual "Saved to ..." status message - every time a click
-  lands in the code area or tab bar, or Insert mode is entered or left
-  (`i`/`Esc`), as long as it already has a name.
+  status-line prompt, and a scrollable file list when more than one
+  file is involved instead of a comma-joined string that would
+  otherwise just get clipped. `y`/`n`/`Esc` still work from the
+  keyboard too, either way.
+- With `AUTOSAVE=True` too (off by default - see
+  [Configuration](#configuration)), the current file saves itself
+  automatically - no confirmation, nothing beyond the usual "Saved
+  to ..." status message - every time a click lands in the code area
+  or tab bar, or Insert mode is entered or left (`i`/`Esc`), as long
+  as it already has a name.
 
 One real tradeoff to know about: enabling this makes the terminal
 hand click-and-drag over to Mini instead of doing its own native text
@@ -609,7 +641,7 @@ their own native selection (and its copy shortcut) back on demand -
 that's a terminal feature, not something Mini controls, but it works
 in the great majority of them.
 
-### Tabs
+## Tabs
 
 Every open file lives in its own tab, keeping its own undo history,
 cursor position, and unsaved-changes state. Opening a file from the
@@ -629,16 +661,16 @@ vertical line separating each one. With `MOUSE_ENABLED` on, clicking a
 tab switches to it directly, and each tab also gets its own "×" right
 after its name to close it directly, prompting to save first if it's
 modified - the mouse-only equivalent of `:q` on that specific tab,
-whichever one is currently active or not (see "Mouse"). There's no ×
-without the mouse on, since `:q` already covers this from the
+whichever one is currently active or not (see [Mouse](#mouse)). There's
+no × without the mouse on, since `:q` already covers this from the
 keyboard.
 
 Closing the very last tab - by `:q`, its ×, or the "Close Mini" button
-(see "Mouse") - no longer exits Mini outright: it resets that tab to a
-blank, unnamed buffer instead, the same state `mini` with no file
-argument starts in. Only closing a tab already in that exact state -
-nothing left to lose - actually exits, so doing it again on that
-now-blank tab is what quits for good.
+(see [Mouse](#mouse)) - no longer exits Mini outright: it resets that
+tab to a blank, unnamed buffer instead, the same state `mini` with no
+file argument starts in. Only closing a tab already in that exact
+state - nothing left to lose - actually exits, so doing it again on
+that now-blank tab is what quits for good.
 
 New files and directories are created inside whichever directory you
 last expanded; collapsing a directory moves that target back up to
@@ -653,7 +685,7 @@ Mini reads `~/.minirc` on startup. The installer creates one with
 sensible defaults; you can edit it freely; it is never overwritten
 except to refresh its backup copy - and to add any setting a newer
 Mini introduces after an update, if your file doesn't have it yet
-(see "Updating" above).
+(see [Updating](#updating)).
 
 ```ini
 THEME=base
@@ -676,6 +708,7 @@ KEYWORD_COLOR=33
 DUNDER_COLOR=11
 TYPE_COLOR=2
 FUNCTION_COLOR=5
+PARAMETER_COLOR=208
 SUGGESTION_COLOR=244
 ACTIVE_TAB_COLOR=240
 INACTIVE_TAB_COLOR=232
@@ -684,6 +717,7 @@ LINE_LENGTH_ERROR_COLOR=196
 STRING_COLOR=117
 DECLARATION_COLOR=203
 COMMENT_COLOR=108
+WORD_MATCH_COLOR=24
 
 [dark]
 ...
@@ -722,7 +756,8 @@ TAB_SIZE=2
   carried over verbatim by Enter. `TAB_SIZE` (default `4`) is also
   how wide an actual tab character displays as, wherever one appears
   in a line (typed, pasted, or already in a file you opened) - except
-  an inline (non-leading) one; see "Elastic tabstops" below.
+  an inline (non-leading) one; see
+  [Elastic tabstops](#elastic-tabstops) below.
 - A `[filetype:.ext]` section (the extension, dot included - `.js`,
   `.rs`, whatever you want) overrides `MAX_COLS_ENABLED`/`MAX_COLS`/
   `INDENT_WITH_TABS`/`TAB_SIZE` for files with that extension - only
@@ -734,18 +769,20 @@ TAB_SIZE=2
   itself never writes one for you.
 - `MOUSE_ENABLED` (default `True`) turns on click-to-place-cursor,
   click-and-drag selection, the scroll wheel, and clicking, multi-
-  selecting, and drag & drop in the worktree panel - see "Mouse" above
-  for exactly what each does, and the one real tradeoff (the
-  terminal's own click-drag text selection stops working while Mini
-  has focus) worth knowing about before turning it off.
+  selecting, and drag & drop in the worktree panel - see
+  [Mouse](#mouse) above for exactly what each does, and the one real
+  tradeoff (the terminal's own click-drag text selection stops working
+  while Mini has focus) worth knowing about before turning it off.
 - `AUTOSAVE` (default `False`, `MOUSE_ENABLED` also needed) saves the
   current file automatically, with no confirmation, on a click in the
-  code area/tab bar or an Insert mode entry/exit - see "Mouse" above
-  for exactly which moments trigger it.
+  code area/tab bar or an Insert mode entry/exit - see
+  [Mouse](#mouse) above for exactly which moments trigger it.
 - Every color is an xterm 256-color palette number (0-255); a chart
   such as <https://www.ditig.com/256-colors-cheat-sheet> is a
   convenient reference. `RULER_COLOR` and `LINE_LENGTH_ERROR_COLOR`
-  control the two `MAX_COLS` indicators above.
+  control the two `MAX_COLS` indicators above; `PARAMETER_COLOR` and
+  `TYPE_COLOR` control the parameter/class-and-type colors described
+  in [Syntax highlighting](#syntax-highlighting).
 
 If a value in `~/.minirc` is missing or invalid, Mini falls back to
 `~/.minirc.bak` (a copy of the last known-good configuration), and
@@ -783,12 +820,13 @@ each column aligning independently of the others. Leading
 elastic ones later on.
 
 One real interaction to know about: `Tab` in Insert mode accepts the
-current autocompletion suggestion when one is showing (see "Key
-reference" below), *before* it ever inserts a literal tab character.
-`int` alone already matches `int8_t`/`int16_t`/.../`intptr_t`, so
-`Tab` right after typing it completes to one of those instead of
-inserting the separator - press `Esc` first to dismiss the dropdown,
-*then* `Tab`, to actually get the tab character in a case like that.
+current autocompletion suggestion when one is showing (see
+[Key reference](#key-reference)), *before* it ever inserts a literal
+tab character. `int` alone already matches `int8_t`/`int16_t`/.../
+`intptr_t`, so `Tab` right after typing it completes to one of those
+instead of inserting the separator - press `Esc` first to dismiss the
+dropdown, *then* `Tab`, to actually get the tab character in a case
+like that.
 
 ## Project structure
 
@@ -796,13 +834,17 @@ inserting the separator - press `Esc` first to dismiss the dropdown,
 |--------------------|-------------------------------------------------------------|
 | `main.py`          | Command-line entry point                                    |
 | `text_editor.py`   | The `TextEditor` class itself: top-level state, `__init__`, and the main key-reading loop that routes each keypress to whichever mixin below handles it |
-| `rendering.py`     | Turning editor state into the ANSI-escaped frame written to the terminal: the tab bar, bracket/quote matching, the help screen, `render()` |
+| `rendering.py`     | Turning editor state into the ANSI-escaped frame written to the terminal: the tab bar, syntax-highlight application, `render()` |
+| `mouse.py`         | Mouse event dispatch: resolving a click/drag/wheel event to whatever region of the last-rendered frame it landed on |
+| `dialogs.py`       | Geometry and rendering for the centered overlay boxes: "Close Mini", the welcome banner, the new-file/rename dialog, and the y/n confirm box |
 | `editing.py`       | Core buffer mutations: cursor movement, undo/redo, selection, insert/backspace/delete, paste, auto-indenting Enter |
 | `commands.py`      | The `:` command line: parsing, dispatch, save/close, line-numbered operations, search |
 | `tabs.py`          | Multi-tab buffer lifecycle: switching tabs, reading files from disk |
-| `worktree.py`      | The worktree file explorer panel: listing, expanding/collapsing, creating/deleting entries |
+| `worktree.py`      | The worktree file explorer panel: listing, expanding/collapsing, creating/deleting/renaming entries |
 | `run_panel.py`     | `:run`/`:lint`/`:cmd`'s shared pty-backed output panel |
-| `autocomplete.py`  | Word/keyword/module/type-aware suggestions for `.py`, and word/keyword/`#include` suggestions for C/C++ |
+| `autocomplete.py`  | Word/keyword/module/type-aware suggestions for `.py` files |
+| `c_autocomplete.py` | C/C++'s own comment-scanning and `#include` machinery for autocompletion |
+| `python_introspection.py` | The subprocess/jedi introspection engine behind Python's type-aware completion |
 | `highlighting.py`  | Python and C/C++ syntax highlighting for one line at a time  |
 | `languages.py`     | File-extension-to-language detection and the C/C++ keyword/type vocabularies |
 | `venv_detect.py`   | Virtualenv detection for `:run`/`:lint`/`:cmd`                |
@@ -818,20 +860,21 @@ inserting the separator - press `Esc` first to dismiss the dropdown,
 
 Mini is intentionally small. Some notable limitations:
 
-- The scroll wheel (see "Mouse") moves the cursor a few lines at a
-  time rather than scrolling the view independently of it - Mini has
-  no notion of a viewport detached from the cursor for the code area
-  the way the `:run`/`:lint`/`:cmd` output panel already does for
+- The scroll wheel (see [Mouse](#mouse)) moves the cursor a few lines
+  at a time rather than scrolling the view independently of it - Mini
+  has no notion of a viewport detached from the cursor for the code
+  area the way the `:run`/`:lint`/`:cmd` output panel already does for
   itself.
-- Elastic tabstops (see "Configuration") have no notion of strings or
-  comments: a tab inside either of those is still treated as a column
-  separator like any other, same as everything else here that colors
-  or completes one line at a time without deeper parsing. A block's
-  width is also recomputed from scratch on every single render with
-  no cross-render cache, which is unnoticeable for the small,
-  deliberate tables this feature is actually meant for, but means an
-  unusually large single block (thousands of aligned lines) would
-  cost more per keystroke than a typical file does.
+- Elastic tabstops (see [Configuration](#configuration)) have no
+  notion of strings or comments: a tab inside either of those is still
+  treated as a column separator like any other, same as everything
+  else here that colors or completes one line at a time without
+  deeper parsing. A block's width is also recomputed from scratch on
+  every single render with no cross-render cache, which is
+  unnoticeable for the small, deliberate tables this feature is
+  actually meant for, but means an unusually large single block
+  (thousands of aligned lines) would cost more per keystroke than a
+  typical file does.
 - Syntax highlighting and autocompletion only apply to `.py`,
   `.c`/`.h`, and `.cpp`/`.hpp`/`.cc`/`.hh`/`.cxx`/`.hxx` files - a
   `.h` file is always treated as C, never C++, since there's no
@@ -839,13 +882,13 @@ Mini is intentionally small. Some notable limitations:
 - The C/C++ side is word/keyword completion only - none of the
   Python side's type inference, `self`/`->` awareness, or macro
   expansion.
-- Without jedi (see "Installation"), completing names after `from
-  module import `, or completing `name.` when `name` was assigned an
-  imported class, actually imports that module (in an isolated
-  subprocess, using the project's own resolved interpreter - not
-  necessarily Mini's own) to see what it contains. For your own local
-  files this means their top-level code really runs - the same as if
-  you executed them - the first time you complete from them in a
+- Without jedi (see [Installation](#installation)), completing names
+  after `from module import `, or completing `name.` when `name` was
+  assigned an imported class, actually imports that module (in an
+  isolated subprocess, using the project's own resolved interpreter -
+  not necessarily Mini's own) to see what it contains. For your own
+  local files this means their top-level code really runs - the same
+  as if you executed them - the first time you complete from them in a
   session; results are then cached until you restart Mini, even if
   the file changes again. A class defined right in the file being
   edited is read with `ast` instead (never executed), but only when
@@ -922,3 +965,7 @@ Mini is intentionally small. Some notable limitations:
   interpreter, module, and names, for the rest of the session) - so
   `pip install`-ing a missing package in another terminal while Mini
   is open doesn't clear its `●` marker until Mini is restarted.
+
+## License
+
+[MIT](LICENSE) - see the [LICENSE](LICENSE) file for the full text.

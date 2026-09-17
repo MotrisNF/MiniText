@@ -750,11 +750,26 @@ class WorktreePanelMixin:
                 # worktree root itself either - it can't be deleted or
                 # renamed from here (see _worktree_delete/_worktree_
                 # rename), so neither icon would ever do anything.
+                # Each icon only actually turns its own color when the
+                # mouse is precisely over its own narrow zone (see
+                # _worktree_rename_hit_test/_worktree_delete_hit_test)
+                # - blending into the row's own color otherwise - so
+                # the color itself tells you a click right here would
+                # do something, not just "this row has icons at all".
+                # Same idea as `_tab_bar_line`'s own × already uses.
                 resume = base_color if base_color else theme.COLOR_RESET
+                rename_color = (
+                    theme.CURRENT_LINE_INDICATOR_COLOR
+                    if self._hovered_worktree_rename == index else resume
+                )
+                delete_color = (
+                    _DELETE_HOVER_COLOR
+                    if self._hovered_worktree_delete == index else resume
+                )
                 row_text = (
                     f"{plain_row[:-4]} "
-                    f"{theme.CURRENT_LINE_INDICATOR_COLOR}\x1b[1m✎\x1b[22m"
-                    f"{resume} {_DELETE_HOVER_COLOR}\x1b[1m×"
+                    f"{rename_color}\x1b[1m✎\x1b[22m"
+                    f"{resume} {delete_color}\x1b[1m×"
                     f"\x1b[22m{resume}"
                 )
             else:

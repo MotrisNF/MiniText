@@ -109,6 +109,7 @@ class TextEditor(
         self._hovered_tab_close = None
         self._hovered_close_mini = False
         self._hovered_worktree_delete = None
+        self._hovered_worktree_rename = None
         self._hovered_worktree_row = None
         self._worktree_drag_origin = None
         self._worktree_drag_target = None
