@@ -766,11 +766,21 @@ class WorktreePanelMixin:
                     _DELETE_HOVER_COLOR
                     if self._hovered_worktree_delete == index else resume
                 )
+                # \x1b[22m only ever cancels bold - when `resume` is
+                # theme.SELECTION_START (reverse video, a mode toggle,
+                # not a color-setting code, on an otherwise plain
+                # hovered row) it does nothing to cancel a foreground
+                # color the ✎/× themselves just set, which would
+                # otherwise bleed from one icon into the other (and
+                # into whatever follows) instead of actually "blending
+                # back into the row". theme.COLOR_RESET always sets a
+                # real foreground first, so `resume` only ever has to
+                # additionally toggle a mode, never undo a color.
                 row_text = (
                     f"{plain_row[:-4]} "
-                    f"{rename_color}\x1b[1m✎\x1b[22m"
+                    f"{rename_color}\x1b[1m✎\x1b[22m{theme.COLOR_RESET}"
                     f"{resume} {delete_color}\x1b[1m×"
-                    f"\x1b[22m{resume}"
+                    f"\x1b[22m{theme.COLOR_RESET}{resume}"
                 )
             else:
                 row_text = plain_row

@@ -7,7 +7,9 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
+))
 import theme  # noqa: E402
 from commands import CommandMixin  # noqa: E402
 

@@ -6,7 +6,9 @@ development-only, see README-less tests/ directory."""
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
+))
 
 from editing import BufferEditMixin  # noqa: E402
 

@@ -42,9 +42,10 @@ _CLI_HELP_LINES = (
 
 
 def _read_version():
-    version_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "VERSION"
-    )
+    # VERSION lives at the repo root, one level up from this file's
+    # own mini/ package directory.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    version_path = os.path.join(repo_root, "VERSION")
     try:
         with open(version_path, encoding="utf-8") as f:
             return f.read().strip()

@@ -7,7 +7,9 @@ import re
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
+))
 import theme  # noqa: E402
 from worktree import (  # noqa: E402
     WorktreePanelMixin, WORKTREE_WIDTH, _DELETE_HOVER_COLOR,
@@ -141,6 +143,27 @@ def test_icons_only_take_their_own_color_precisely_hovered():
         assert _DELETE_HOVER_COLOR in lines[1]
 
 
+def test_rename_color_does_not_bleed_into_the_delete_icon():
+    """Regression: \\x1b[22m only ever cancels bold, so on a plain
+    hovered row (base_color is theme.SELECTION_START, a reverse-video
+    mode toggle, not a color-setting code) it never actually canceled
+    the ✎'s own amber foreground color - it stayed active straight
+    through the delete "×" too, coloring it amber as well even while
+    only the rename icon was precisely hovered."""
+    theme.MOUSE_ENABLED = True
+    with tempfile.TemporaryDirectory() as tmp:
+        a_path = os.path.join(tmp, "a.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake._hovered_worktree_row = a_path
+        fake._hovered_worktree_rename = 1
+        lines = fake._worktree_body_lines(10)
+        row = lines[1]
+        after_rename_icon = row[row.index("✎") + len("✎\x1b[22m"):]
+        assert theme.CURRENT_LINE_INDICATOR_COLOR not in after_rename_icon
+        assert _DELETE_HOVER_COLOR not in after_rename_icon
+
+
 TESTS = [
     test_hit_test_only_matches_last_two_columns_of_a_real_entry_row,
     test_hit_test_disabled_without_mouse,
@@ -148,4 +171,5 @@ TESTS = [
     test_hover_reveal_is_not_limited_to_the_edge_columns,
     test_hovered_row_gets_a_reverse_video_highlight,
     test_icons_only_take_their_own_color_precisely_hovered,
+    test_rename_color_does_not_bleed_into_the_delete_icon,
 ]

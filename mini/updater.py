@@ -1,16 +1,17 @@
 """Self-update support for an installed Mini.
 
 Only does anything when this file is running from an installed copy -
-that is, from `$LIBDIR/src/main.py` where `$LIBDIR/src` is a git clone
-(created by install.sh). Running `python3 main.py` straight from a dev
-checkout is not "installed" and every function here becomes a no-op
-(or, for `mini --update`, prints a clear explanation instead of
-guessing at paths).
+that is, from `$LIBDIR/src/mini/main.py` where `$LIBDIR/src` is a git
+clone (created by install.sh). Running `python3 mini/main.py` straight
+from a dev checkout is not "installed" and every function here becomes
+a no-op (or, for `mini --update`, prints a clear explanation instead
+of guessing at paths).
 
 Layout on disk, once installed::
 
     $LIBDIR/
         src/            <- git clone, origin points at the real remote
+            mini/       <- this file's own package directory
         env             <- LIBDIR=... / BINDIR=... used to reinstall
         last_check      <- unix timestamp the remote was last checked
 
@@ -42,7 +43,11 @@ CHECK_INTERVAL_SECONDS = 4 * 60 * 60
 
 
 def _paths():
-    src_dir = os.path.dirname(os.path.abspath(__file__))
+    # This file lives at $LIBDIR/src/mini/updater.py - src_dir needs
+    # to land on $LIBDIR/src itself (the actual git working tree
+    # every _git() call below operates on), one level up from this
+    # file's own mini/ package directory.
+    src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     install_dir = os.path.dirname(src_dir)
     return src_dir, install_dir
 

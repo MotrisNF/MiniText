@@ -152,14 +152,14 @@ fi
 wrapper="$(mktemp)"
 cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
-exec "$python_for_wrapper" "$libdir/src/main.py" "\$@"
+exec "$python_for_wrapper" "$libdir/src/mini/main.py" "\$@"
 EOF
 install -m 0755 "$wrapper" "$bindir/mini"
 rm -f "$wrapper"
 echo "  Installed at $bindir/mini"
 
 if [ ! -e "$HOME/.minirc" ]; then
-  python3 "$libdir/src/theme.py" > "$HOME/.minirc"
+  python3 "$libdir/src/mini/theme.py" > "$HOME/.minirc"
   cp "$HOME/.minirc" "$HOME/.minirc.bak"
   echo "  Created $HOME/.minirc (base/dark/light themes, edit freely)"
 else
@@ -170,7 +170,7 @@ else
   # Carries any setting/color key a newer Mini added over the years
   # into an existing ~/.minirc, so it doesn't just silently fall back
   # to an invisible in-code default forever.
-  migration_report="$(python3 "$libdir/src/theme.py" --migrate "$HOME/.minirc")"
+  migration_report="$(python3 "$libdir/src/mini/theme.py" --migrate "$HOME/.minirc")"
   if [ -n "$migration_report" ]; then
     echo "  $migration_report"
   fi

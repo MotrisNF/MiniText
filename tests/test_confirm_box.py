@@ -6,7 +6,9 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
+))
 from commands import CommandMixin  # noqa: E402
 from dialogs import (  # noqa: E402
     DialogMixin, _CONFIRM_MAX_VISIBLE_ITEMS,

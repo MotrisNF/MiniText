@@ -6,7 +6,9 @@ still colored as a type, not as a parameter."""
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
+))
 import theme  # noqa: E402
 from highlighting import _highlight_python  # noqa: E402
 
