@@ -19,6 +19,7 @@ def _strip_ansi(text):
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
         self.worktree_root = root
+        self.worktree_root_collapsed = False
         self.worktree_show_hidden = True
         self.worktree_expanded = set()
         self.worktree_cursor = 0
@@ -36,8 +37,10 @@ def test_hit_test_only_matches_last_two_columns_of_a_real_entry_row():
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        assert fake._worktree_delete_hit_test(1, WORKTREE_WIDTH - 1) == 0
-        assert fake._worktree_delete_hit_test(1, WORKTREE_WIDTH - 2) == 0
+        # entries[0] is the root itself (never hit-testable - see
+        # _worktree_icon_hit_test); entries[1] is a.txt.
+        assert fake._worktree_delete_hit_test(1, WORKTREE_WIDTH - 1) == 1
+        assert fake._worktree_delete_hit_test(1, WORKTREE_WIDTH - 2) == 1
         assert fake._worktree_delete_hit_test(1, WORKTREE_WIDTH - 3) is None
         assert fake._worktree_delete_hit_test(0, WORKTREE_WIDTH - 1) is None
 

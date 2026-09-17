@@ -3,6 +3,60 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.11.3 - 2026-09-17
+
+- Fixed a second, deeper case of the overlay boxes leaving a stale
+  border/silhouette behind (1.11.1 fixed the simple "one box replaces
+  another" case, but missed this one): the "Close Mini" button and a
+  confirm box can legitimately be showing at the same time (deleting
+  or moving a worktree entry while the last tab is still the blank
+  welcome screen), and the redraw check only tracked "which single box
+  is showing" - close_box staying up the whole time hid confirm_box's
+  own appearing/disappearing right underneath it. Each of the three
+  overlay boxes now has its own independent slot in that check instead
+  of sharing one.
+- Fixed `read_key()` decoding stdin one byte at a time, which silently
+  dropped every accented/non-ASCII character typed (a lone UTF-8 lead
+  byte always fails to decode on its own) - it now reads the whole
+  multi-byte sequence before decoding.
+- Fixed `mini --update`'s own `git pull`/`install.sh` running with no
+  timeout at all, unlike every other git call the updater makes - a
+  stalled network or a hung install.sh could block indefinitely with
+  no way out.
+- Class names (both a class's own definition and any type annotation
+  naming one) are now colored the same as builtin type names; a
+  function/method definition's own parameter names get their own new
+  color (`PARAMETER_COLOR`, configurable in `~/.minirc` like every
+  other syntax color), separate from a typed parameter's own
+  annotation.
+- Added renaming files/directories in the worktree panel: `r`, or the
+  row's own hover "✎" in mouse mode (next to the existing delete "×"),
+  prompts for a new name pre-filled with the current one. Renaming a
+  directory rewrites every path that was nested under it (open tabs,
+  the multi-selection, expanded directories, and where new entries get
+  created), so nothing is left pointing at a path that no longer
+  exists.
+- The worktree panel's own root directory is now its own row at the
+  top of the tree (not a separate, non-interactive header line) -
+  collapsible like any other directory, except it can't be deleted or
+  renamed from here. Collapsing it hides the whole tree at once and
+  moves "new files/folders go here" back to the top level, a quick way
+  back after navigating deep into a project.
+- Internal: split `rendering.py` into `rendering.py` (the tab bar,
+  syntax-highlight application, and the main render loop),
+  `mouse.py` (mouse event dispatch), and `dialogs.py` (the centered
+  overlay boxes' geometry and rendering) - and `autocomplete.py` into
+  `autocomplete.py` (Python-specific completion), `c_autocomplete.py`
+  (C/C++'s own comment-scanning and `#include` machinery), and
+  `python_introspection.py` (the subprocess/jedi introspection
+  engine). Also grouped autocomplete's various caches into one
+  `SuggestionCaches` object instead of a dozen loose attributes, and
+  removed a fair amount of small duplication across worktree.py,
+  editing.py, tabs.py, run_panel.py, highlighting.py, commands.py,
+  theme.py, and updater.py. `run_refactor.md` documents the similar
+  (larger, deferred) cleanup still pending for `text_editor.py`'s own
+  `run()` and the worktree/run-panel state that's entangled with it.
+
 ## 1.11.2 - 2026-09-17
 
 - Redrew the welcome banner again: 1.11.1's mechanical downscale of

@@ -12,6 +12,7 @@ from worktree import WorktreePanelMixin  # noqa: E402
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
         self.worktree_root = root
+        self.worktree_root_collapsed = False
         self.worktree_show_hidden = True
         self.worktree_expanded = set()
         self.worktree_cursor = 0
@@ -30,8 +31,11 @@ class FakePanel(WorktreePanelMixin):
         return True
 
     def _row_for(self, name):
+        # entries[0] is the root itself - the direct index into
+        # `entries` already IS the correct panel_row (see
+        # _worktree_row_index), no +1 header offset any more.
         entries = self._worktree_entries()
-        return 1 + next(i for i, e in enumerate(entries) if e[1] == name)
+        return next(i for i, e in enumerate(entries) if e[1] == name)
 
 
 def test_drop_on_directory_moves_inside_it():

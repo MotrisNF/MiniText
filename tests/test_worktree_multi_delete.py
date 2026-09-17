@@ -13,6 +13,7 @@ from worktree import WorktreePanelMixin  # noqa: E402
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
         self.worktree_root = root
+        self.worktree_root_collapsed = False
         self.worktree_show_hidden = True
         self.worktree_expanded = set()
         self.worktree_cursor = 0
@@ -38,7 +39,8 @@ def test_deleting_a_selected_entry_deletes_the_whole_selection():
         fake = FakePanel(tmp)
         fake.worktree_selected_entries = {a_path, b_path}
         entries = fake._worktree_entries()
-        fake._worktree_delete(entries)  # cursor (index 0) is a.txt
+        fake.worktree_cursor = 1  # entries[0] is the root itself; 1 is a.txt
+        fake._worktree_delete(entries)
         assert not os.path.exists(a_path)
         assert not os.path.exists(b_path)
         assert len(fake.confirm_calls) == 1
@@ -54,7 +56,8 @@ def test_deleting_an_unselected_entry_only_deletes_that_one():
         fake = FakePanel(tmp)
         fake.worktree_selected_entries = {b_path}  # a.txt not selected
         entries = fake._worktree_entries()
-        fake._worktree_delete(entries)  # cursor (index 0) is a.txt
+        fake.worktree_cursor = 1  # entries[0] is the root itself; 1 is a.txt
+        fake._worktree_delete(entries)
         assert not os.path.exists(a_path)
         assert os.path.exists(b_path)
         assert fake.worktree_selected_entries == {b_path}
@@ -74,6 +77,7 @@ def test_deleting_a_selection_sends_names_as_a_list_not_a_joined_string():
         fake = FakePanel(tmp)
         fake.worktree_selected_entries = {a_path, b_path}
         entries = fake._worktree_entries()
+        fake.worktree_cursor = 1
         fake._worktree_delete(entries)
         assert fake.confirm_calls == ["Delete 2 items? (y/n)"]
         assert fake.confirm_items == [["a.txt", "b.txt"]]
@@ -85,6 +89,7 @@ def test_deleting_a_single_entry_still_uses_the_plain_prompt():
         open(a_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         entries = fake._worktree_entries()
+        fake.worktree_cursor = 1
         fake._worktree_delete(entries)
         assert fake.confirm_calls == ["Delete file 'a.txt'? (y/n)"]
         assert fake.confirm_items == [None]

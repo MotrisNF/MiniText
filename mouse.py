@@ -146,8 +146,13 @@ class MouseMixin:
                 delete_index = self._worktree_delete_hit_test(
                     target[1], target[2]
                 )
+                rename_index = self._worktree_rename_hit_test(
+                    target[1], target[2]
+                )
                 if delete_index is not None:
                     self._worktree_delete_by_index(delete_index)
+                elif rename_index is not None:
+                    self._worktree_rename_by_index(rename_index)
                 else:
                     entry = self._worktree_entry_at_row(target[1])
                     # A Ctrl+press starts a paint-select drag instead
@@ -162,7 +167,8 @@ class MouseMixin:
                     )
                     self._worktree_drag_origin = (
                         entry[0]
-                        if entry is not None and not ctrl_held else None
+                        if entry is not None and not ctrl_held
+                        and entry[0] != self.worktree_root else None
                     )
                     self._handle_worktree_click(target[1], ctrl_held)
             elif kind == "MOUSE_DRAG":

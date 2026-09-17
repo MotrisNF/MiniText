@@ -475,6 +475,14 @@ as it always did.
 Hidden files and directories (name starting with `.`) are hidden by
 default, at every depth - `Ctrl+H` toggles showing them.
 
+The panel's own top row is the worktree root itself - a directory
+entry like any other (same `l`/`h`/Enter/click to expand or collapse),
+except it can't be deleted or renamed from here. Collapsing it hides
+the whole tree at once and moves new files/folders (`Ctrl+F`/`Ctrl+D`)
+back to the top level, the same way collapsing any other directory
+moves them to its own parent - a quick way back to the top after
+navigating deep into a project without leaving the panel.
+
 While the panel is visible, the status/command line and the mode bar
 at the bottom start right where the panel ends, lining up with the
 code above them instead of running under the panel. The mode bar
@@ -492,6 +500,7 @@ being in the editor.
 | Ctrl+F         | Create a new file (prompts for a name in a centered box)       |
 | Ctrl+D         | Create a new directory (prompts for a name in a centered box)  |
 | Ctrl+H         | Toggle showing hidden files/directories (names starting with `.`) |
+| `r`            | Rename the selected file or directory (prompts for a new name in a centered box, pre-filled with the current one) |
 | Delete         | Delete the selected file or directory, after confirming        |
 | `v`, `Esc`     | Return focus to the editor                                     |
 | `:`, `i`       | Return focus to the editor directly in Command or Insert mode  |
@@ -549,9 +558,10 @@ enabled:
   needed, there's no real "open" step to hold back the way there is
   for a file. Hovering any entry highlights its row in reverse video
   (a minimal "you're pointing at this one" cue, separate from the
-  cursor's own indicator) and reveals a "×" at the right edge of its
-  row; clicking it asks for confirmation the same way `Delete` already
-  does. `Ctrl`+click toggles that one entry in/out of a
+  cursor's own indicator) and reveals a "✎"/"×" pair at the right edge
+  of its row; clicking "×" asks for confirmation the same way `Delete`
+  already does, and clicking "✎" opens the same rename box as pressing
+  `r` does. `Ctrl`+click toggles that one entry in/out of a
   multi-selection (shown with its own background color, combined with
   the cursor's own color if the two ever land on the same row),
   independent of the normal single-entry selection - a plain click

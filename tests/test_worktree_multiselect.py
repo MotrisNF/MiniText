@@ -14,6 +14,7 @@ from worktree import WorktreePanelMixin  # noqa: E402
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
         self.worktree_root = root
+        self.worktree_root_collapsed = False
         self.worktree_show_hidden = True
         self.worktree_expanded = set()
         self.worktree_cursor = 0
@@ -139,6 +140,7 @@ def test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too():
         open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         a_path = os.path.join(tmp, "a.txt")
+        fake.worktree_cursor = 1  # entries[0] is the root; 1 is a.txt
         fake.worktree_selected_entries = {a_path}  # cursor is also a.txt
         lines = fake._worktree_body_lines(5)
         assert theme.WORD_MATCH_START in lines[1]

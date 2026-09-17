@@ -67,6 +67,7 @@ class TextEditor(
         self.worktree_focused = False
         self.worktree_visible_because_of_focus = False
         self.worktree_root = os.getcwd()
+        self.worktree_root_collapsed = False
         self.worktree_expanded = set()
         self.worktree_selected_entries = set()
         self.worktree_show_hidden = False
@@ -221,6 +222,8 @@ class TextEditor(
                             self._invalidate_worktree_cache()
                         elif key == "DELETE":
                             self._worktree_delete(entries)
+                        elif key == "r":
+                            self._worktree_rename(entries)
                         elif key in ("v", ESC):
                             self._release_worktree_focus()
                         elif key == ":":
