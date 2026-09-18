@@ -123,6 +123,28 @@ def test_cancelling_the_dialog_is_a_no_op():
         assert os.path.exists(path)
 
 
+def test_renaming_onto_an_existing_name_refuses_instead_of_overwriting():
+    """Regression: os.rename() on its own silently replaces an
+    existing destination file - renaming 'a.txt' to 'b.txt' when
+    'b.txt' already existed used to destroy it with no warning at
+    all."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a_path = os.path.join(tmp, "a.txt")
+        b_path = os.path.join(tmp, "b.txt")
+        with open(a_path, "w", encoding="utf-8") as file:
+            file.write("from a")
+        with open(b_path, "w", encoding="utf-8") as file:
+            file.write("important, pre-existing content")
+        fake = FakePanel(tmp)
+        fake._next_name = "b.txt"
+        fake.worktree.cursor = 1  # entries[0] is the root; 1 is a.txt
+        fake._worktree_rename(fake._worktree_entries())
+        assert "already exists" in fake.status
+        assert os.path.exists(a_path)
+        with open(b_path, encoding="utf-8") as file:
+            assert file.read() == "important, pre-existing content"
+
+
 def test_rename_hit_test_and_delete_hit_test_zones_do_not_overlap():
     theme.MOUSE_ENABLED = True
     with tempfile.TemporaryDirectory() as tmp:
@@ -163,6 +185,7 @@ TESTS = [
     test_renaming_a_directory_rewrites_nested_paths,
     test_renaming_to_the_same_name_is_a_no_op,
     test_cancelling_the_dialog_is_a_no_op,
+    test_renaming_onto_an_existing_name_refuses_instead_of_overwriting,
     test_rename_hit_test_and_delete_hit_test_zones_do_not_overlap,
     test_rename_by_index_targets_the_hovered_row_not_the_cursor,
 ]

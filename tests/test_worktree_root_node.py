@@ -34,6 +34,9 @@ class FakePanel(WorktreePanelMixin):
         self.confirm_calls.append(prompt)
         return True
 
+    def _maybe_autosave(self):
+        pass
+
 
 def test_root_is_the_first_entry():
     with tempfile.TemporaryDirectory() as tmp:

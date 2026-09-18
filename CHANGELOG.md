@@ -3,6 +3,32 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.11.5 - 2026-09-18
+
+- Fixed renaming a file/directory, or dragging one onto another in
+  the worktree panel, silently overwriting an existing entry that
+  already had the destination name - `os.rename()`/`shutil.move()`
+  both replace an existing destination on their own with no warning
+  at all, unlike creating a new file/directory (which already refused
+  outright). Both now check first and refuse the same way, rather
+  than risking destroying whatever was already there.
+- Fixed AUTOSAVE (mouse mode) not saving the file being left when
+  opening a different one by clicking it in the worktree panel - only
+  a click landing in the code area or on a tab actually triggered it
+  before, so a click that opened another file from the sidebar could
+  skip saving the one just left, silently.
+- Autocompletion backed by jedi (type-aware `name.` completion, and
+  `from module import <TAB>`) used to run synchronously and could
+  visibly freeze the editor - measured at ~100-160ms per new
+  completion context, and over a second for the very first one of a
+  session. It now runs on a background thread: a render waits only a
+  short, bounded moment for it (still instant once jedi's warm), falls
+  back to Mini's own heuristics otherwise, and picks up the real
+  answer moments later - even without another keypress, if the
+  background job finishes while idle. Opening a `.py` file also now
+  kicks off jedi's own one-time warm-up in the background right away,
+  instead of it landing on the first real completion attempt.
+
 ## 1.11.4 - 2026-09-18
 
 - Fixed `_save()` permanently blanking `file_name` to `""` (not back

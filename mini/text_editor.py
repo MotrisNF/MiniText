@@ -10,6 +10,7 @@ import signal
 import time
 from collections import deque
 
+import python_introspection
 import terminal
 import updater
 from autocomplete import SuggestionCaches, SuggestionMixin
@@ -93,6 +94,7 @@ class TextEditor(
         self._mouse_state = MouseState()
         self._name_dialog = None
         self._confirm_dialog = None
+        self._maybe_prewarm_jedi()
 
     def run(self):
         read_fd, write_fd = _enable_resize_wakeup()
@@ -105,6 +107,14 @@ class TextEditor(
         update_check_fd = updater.start_background_update_watcher()
         if update_check_fd is not None:
             terminal.set_update_check_fd(update_check_fd)
+        # Wakes read_key()'s own select() up when a background jedi
+        # completion (see python_introspection.py) finishes while the
+        # user's gone idle waiting for it, instead of only ever
+        # refreshing the dropdown on the next keypress.
+        suggestion_read_fd, suggestion_write_fd = os.pipe()
+        os.set_blocking(suggestion_write_fd, False)
+        terminal.set_suggestion_ready_fd(suggestion_read_fd)
+        python_introspection.set_suggestion_wakeup_fd(suggestion_write_fd)
         try:
             with raw_terminal():
                 while self.running:
@@ -128,6 +138,8 @@ class TextEditor(
                         continue
                     if key == "RUN_OUTPUT":
                         self._pump_run_output()
+                        continue
+                    if key == "SUGGESTION_READY":
                         continue
                     if key == "MOUSE_IGNORE":
                         continue
@@ -164,6 +176,10 @@ class TextEditor(
             if update_check_fd is not None:
                 terminal.set_update_check_fd(None)
                 os.close(update_check_fd)
+            terminal.set_suggestion_ready_fd(None)
+            python_introspection.set_suggestion_wakeup_fd(None)
+            os.close(suggestion_read_fd)
+            os.close(suggestion_write_fd)
 
     def _handle_help_mode_key(self, key):
         if key == "q":

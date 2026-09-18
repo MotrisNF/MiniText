@@ -152,6 +152,16 @@ class WorktreePanelMixin:
             self._invalidate_worktree_cache()
 
     def _worktree_activate(self, entries):
+        # Opening a different file below is exactly the "moved on to
+        # something else" moment `_reset_focus_for_click` already
+        # autosaves for on a plain editor/tab click - this is the one
+        # other place the active buffer can be switched away from
+        # (a mouse click on a worktree entry never routes through that
+        # function at all), so AUTOSAVE (mouse mode only - see
+        # `_maybe_autosave`'s own guard) needs its own call here too,
+        # or a click that opens another file can silently skip saving
+        # the one just left.
+        self._maybe_autosave()
         if not entries:
             return
         path, _, is_directory, _ = entries[self.worktree.cursor]
@@ -219,6 +229,15 @@ class WorktreePanelMixin:
             self.status = "Cancelled"
             return
         new_path = os.path.join(os.path.dirname(old_path), new_name)
+        if os.path.lexists(new_path):
+            # os.rename() on its own would silently replace an
+            # existing destination file instead of failing - unlike
+            # creating a new entry (open(..., "x")/os.mkdir already
+            # refuse outright when the name is taken), so this has to
+            # be checked for explicitly to avoid destroying whatever
+            # was already there under that name.
+            self.status = f"'{new_name}' already exists"
+            return
         try:
             os.rename(old_path, new_path)
         except OSError as error:
@@ -546,14 +565,20 @@ class WorktreePanelMixin:
             return
         moved, errors = [], []
         for source in sources:
-            destination = os.path.join(
-                destination_dir, os.path.basename(source)
-            )
+            name = os.path.basename(source)
+            destination = os.path.join(destination_dir, name)
+            if os.path.lexists(destination):
+                # shutil.move() would otherwise silently replace an
+                # existing file at the destination instead of failing
+                # - never worth the risk of quietly destroying
+                # whatever was already there under that name.
+                errors.append(f"{name}: already exists there")
+                continue
             try:
                 shutil.move(source, destination)
                 moved.append(source)
             except (OSError, shutil.Error) as error:
-                errors.append(f"{os.path.basename(source)}: {error}")
+                errors.append(f"{name}: {error}")
         self.worktree.selected_entries -= set(moved)
         if moved:
             self._invalidate_worktree_cache()

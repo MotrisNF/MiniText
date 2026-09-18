@@ -20,6 +20,9 @@ class FakePanel(WorktreePanelMixin):
         self.lines = [""]
         self.modified = False
 
+    def _maybe_autosave(self):
+        pass
+
 
 def test_single_click_on_directory_expands_it_once_panel_is_focused():
     with tempfile.TemporaryDirectory() as tmp:

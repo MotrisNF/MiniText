@@ -106,6 +106,24 @@ def _remote_is_ahead(src_dir):
     return ancestor.returncode == 0
 
 
+def _remote_version(src_dir):
+    """The VERSION file as it exists on origin's tracked branch tip -
+    only meaningful right after `_remote_is_ahead` has already fetched
+    it (a plain call here does no network I/O of its own). "unknown"
+    if it can't be read for any reason (VERSION missing/moved on that
+    commit, an unreadable branch name, ...) - same fallback
+    `_read_version` gives for the local copy."""
+    branch = _git(src_dir, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch.returncode != 0:
+        return "unknown"
+    result = _git(
+        src_dir, "show", f"origin/{branch.stdout.strip()}:VERSION",
+    )
+    if result.returncode != 0:
+        return "unknown"
+    return result.stdout.strip()
+
+
 def _seconds_since_last_check(install_dir):
     """Seconds since the remote was last checked, or None if it never
     has been (or the timestamp is unreadable - including an older
@@ -198,7 +216,7 @@ def _read_env(install_dir):
     return values
 
 
-def _prompt_update_now():
+def _prompt_update_now(current_version, available_version):
     """A single blocking y/n keypress, asked before the editor itself
     ever opens (so there's no unsaved buffer at risk yet - this is
     the one moment updating in place is entirely safe). Anything but
@@ -208,7 +226,8 @@ def _prompt_update_now():
 
     with raw_terminal():
         sys.stdout.write(
-            "A new version of Mini is available. Update now? (y/n): "
+            f"A new version of Mini is available: {current_version} -> "
+            f"{available_version}. Update now? (y/n): "
         )
         sys.stdout.flush()
         key = read_key()
@@ -357,7 +376,11 @@ def check_for_updates_on_open():
     if ahead is None:
         return
     _write_last_check(install_dir)
-    if not ahead or not _prompt_update_now():
+    if not ahead:
+        return
+    current_version = _read_version(src_dir)
+    available_version = _remote_version(src_dir)
+    if not _prompt_update_now(current_version, available_version):
         return
     if _apply_update(src_dir, install_dir):
         _relaunch(install_dir)
@@ -365,6 +388,17 @@ def check_for_updates_on_open():
         _wait_key("Updated, but couldn't restart Mini automatically.")
     else:
         _wait_key("Update failed - continuing on the current version.")
+
+
+_last_known_update = None
+
+
+def get_available_update():
+    """(current_version, available_version) the last time
+    `start_background_update_watcher`'s own thread found one - or
+    None if it hasn't (yet). Read by `tabs.py`'s
+    `_open_update_notice_tab` once `UPDATE_AVAILABLE` fires."""
+    return _last_known_update
 
 
 def start_background_update_watcher():
@@ -383,6 +417,7 @@ def start_background_update_watcher():
     os.set_blocking(write_fd, False)
 
     def watch():
+        global _last_known_update
         while True:
             elapsed = _seconds_since_last_check(install_dir)
             wait = (
@@ -397,6 +432,9 @@ def start_background_update_watcher():
             if ahead is not None:
                 _write_last_check(install_dir)
                 if ahead:
+                    _last_known_update = (
+                        _read_version(src_dir), _remote_version(src_dir),
+                    )
                     try:
                         os.write(write_fd, b"1")
                     except OSError:
@@ -429,6 +467,10 @@ def run_update_command():
     if not ahead:
         print(f"Already up to date (version {_read_version(src_dir)}).")
         return
+    print(
+        f"Update available: {_read_version(src_dir)} -> "
+        f"{_remote_version(src_dir)}"
+    )
     if not _apply_update(src_dir, install_dir):
         return
     print(f"Mini updated to version {_read_version(src_dir)}.")

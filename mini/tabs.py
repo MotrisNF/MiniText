@@ -7,8 +7,10 @@ import os
 from collections import deque
 
 import theme
+import updater
 
 from editing import UNDO_HISTORY_LIMIT
+from python_introspection import _prewarm_jedi
 
 
 class TabsMixin:
@@ -78,6 +80,7 @@ class TabsMixin:
         self.active_tab = len(self.tabs) - 1
         self._apply_buffer_state(self.tabs[self.active_tab])
         self.status = f"Opened {path} in a new tab"
+        self._maybe_prewarm_jedi()
 
     def _open_update_notice_tab(self):
         """Opens a new, unnamed tab announcing that an update was
@@ -85,15 +88,23 @@ class TabsMixin:
         session was already running - `mini --update`'s own startup
         check shows a banner instead, since there's no editor open
         yet at that point to give it a tab."""
-        self._sync_active_tab()
-        new_state = self._blank_buffer_state()
-        new_state["lines"] = [
-            "A new version of Mini is available.",
-            "",
+        update = updater.get_available_update()
+        lines = ["A new version of Mini is available.", ""]
+        if update is not None:
+            current_version, available_version = update
+            lines.append(
+                f"Current version: {current_version}  ->  "
+                f"Available: {available_version}"
+            )
+            lines.append("")
+        lines.extend([
             "Run 'mini --update' from a shell to install it.",
             "",
             "(This is just a notice, not a file - close it with :q.)",
-        ]
+        ])
+        self._sync_active_tab()
+        new_state = self._blank_buffer_state()
+        new_state["lines"] = lines
         self.tabs.append(new_state)
         self.active_tab = len(self.tabs) - 1
         self._apply_buffer_state(self.tabs[self.active_tab])
@@ -142,6 +153,15 @@ class TabsMixin:
     def _is_python_file(self):
         return bool(self.file_name) and self.file_name.endswith(".py")
 
+    def _maybe_prewarm_jedi(self):
+        """Kicks off jedi's own one-time warm-up (see `_prewarm_jedi`'s
+        own docstring) right when a `.py` file becomes the active
+        buffer, so that cost lands in the background while the user's
+        still reading the file rather than the first time they
+        actually try to complete something."""
+        if self._is_python_file():
+            _prewarm_jedi(self._resolve_python_executable())
+
     def _load_file(self, path):
         try:
             lines = self._read_file(path)
@@ -164,6 +184,7 @@ class TabsMixin:
         self._comment_state = []
         self._comment_state_language = None
         self.status = f"Opened {path}"
+        self._maybe_prewarm_jedi()
 
     def _find_tab_for_path(self, path):
         for index, state in enumerate(self.tabs):

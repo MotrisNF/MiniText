@@ -29,10 +29,39 @@ from languages import (
 )
 from python_introspection import (
     _check_import_resolves, _introspect_class_members,
-    _introspect_module_members, _jedi_completions,
+    _introspect_module_members, _start_background_jedi_completion,
 )
 
 MIN_SUGGESTION_PREFIX = 2
+# How long a jedi-backed lookup (see _start_background_jedi_completion)
+# is worth waiting for synchronously before falling back to Mini's own
+# heuristics for this render - short enough that an already-warm/fast
+# jedi call (the common case once a session's been running a while)
+# still comes back within the same keystroke with no visible delay,
+# long enough that it's not pure theater. Measured cost otherwise:
+# ~100-160ms per new completion context, and over a second for the
+# very first one of a session (see _prewarm_jedi) - both would
+# otherwise block every keystroke on Mini's single-threaded key loop.
+_JEDI_SYNC_WAIT_SECONDS = 0.03
+_JEDI_PENDING = object()
+
+
+def _resolve_background_jedi(pending, cache_key):
+    """Waits up to `_JEDI_SYNC_WAIT_SECONDS` for the background job
+    already registered at `pending[cache_key]` (an (event, box) pair
+    from `_start_background_jedi_completion`) - `_JEDI_PENDING` if
+    it's not done yet (still running in its own thread; a caller
+    should fall back to its own heuristics for now and try again on a
+    later render - `_notify_suggestion_ready` wakes the main loop up
+    on its own for this even without another keypress), otherwise the
+    job's own result (clearing the pending entry either way)."""
+    event, box = pending[cache_key]
+    if not event.wait(_JEDI_SYNC_WAIT_SECONDS):
+        return _JEDI_PENDING
+    del pending[cache_key]
+    return box[0]
+
+
 PYTHON_VOCABULARY = sorted(
     set(keyword.kwlist)
     | {name for name in dir(builtins) if not name.startswith("_")}
@@ -263,6 +292,13 @@ class SuggestionCaches:
         self.import_members = {}
         self.import_broken = {}
         self.jedi_attribute = {}
+        # In-flight background jedi jobs (see
+        # _start_background_jedi_completion/_resolve_background_jedi),
+        # keyed the same way as the cache each one is headed for -
+        # jedi_pending mirrors jedi_attribute, jedi_module_pending
+        # mirrors import_members.
+        self.jedi_pending = {}
+        self.jedi_module_pending = {}
         self.line_word = {}
         self.word_pool_static = frozenset()
         self.word_pool_static_sorted = []
@@ -505,18 +541,30 @@ class SuggestionMixin:
     def _module_member_names(self, module_name):
         directory = self._file_directory()
         cache_key = (directory, module_name)
-        if cache_key not in self._suggestion_caches.import_members:
-            python_path = self._resolve_python_executable()
-            jedi_pool = _jedi_completions(
-                "\n".join(self.lines), self.file_name,
-                self.line + 1, self.column, python_path,
-            )
-            self._suggestion_caches.import_members[cache_key] = jedi_pool or (
-                _introspect_module_members(
-                    directory, module_name, python_path
+        caches = self._suggestion_caches
+        if cache_key in caches.import_members:
+            return caches.import_members[cache_key]
+        python_path = self._resolve_python_executable()
+        if cache_key not in caches.jedi_module_pending:
+            caches.jedi_module_pending[cache_key] = (
+                _start_background_jedi_completion(
+                    "\n".join(self.lines), self.file_name,
+                    self.line + 1, self.column, python_path,
                 )
             )
-        return self._suggestion_caches.import_members[cache_key]
+        jedi_pool = _resolve_background_jedi(
+            caches.jedi_module_pending, cache_key
+        )
+        if jedi_pool is _JEDI_PENDING:
+            # Still running in its own thread - try again next render
+            # rather than falling back to the (also blocking, if
+            # slower) subprocess introspection below on every single
+            # one until it lands.
+            return set()
+        caches.import_members[cache_key] = jedi_pool or (
+            _introspect_module_members(directory, module_name, python_path)
+        )
+        return caches.import_members[cache_key]
 
     def _preceding_identifier(self, dot_index):
         """The bare name right before `line[dot_index]` (a '.'), e.g.
@@ -589,16 +637,29 @@ class SuggestionMixin:
         this dot resolve to" doesn't change as more of the attribute
         name is typed after it; like every other cache here, it's
         never invalidated mid-session, so an edit far above a `name.`
-        already completed once won't be picked up until Mini restarts."""
+        already completed once won't be picked up until Mini restarts.
+
+        The actual jedi call runs in a background thread (see
+        `_start_background_jedi_completion`) - `None` here means
+        either jedi genuinely found nothing (falls back to
+        `_infer_attribute_pool`, same as always) or it just hasn't
+        finished yet (a later render, once it has, gets the real
+        answer from `jedi_attribute` directly instead)."""
         cache_key = (id(self.lines), self.line, dot_index)
         caches = self._suggestion_caches
-        if cache_key not in caches.jedi_attribute:
+        if cache_key in caches.jedi_attribute:
+            return caches.jedi_attribute[cache_key]
+        if cache_key not in caches.jedi_pending:
             python_path = self._resolve_python_executable()
-            caches.jedi_attribute[cache_key] = _jedi_completions(
+            caches.jedi_pending[cache_key] = _start_background_jedi_completion(
                 "\n".join(self.lines), self.file_name,
                 self.line + 1, self.column, python_path,
             )
-        return caches.jedi_attribute[cache_key]
+        result = _resolve_background_jedi(caches.jedi_pending, cache_key)
+        if result is _JEDI_PENDING:
+            return None
+        caches.jedi_attribute[cache_key] = result
+        return result
 
     def _infer_attribute_pool(self, name):
         """Names to offer for `name.<TAB>`, narrowed to name's actual

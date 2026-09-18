@@ -5,9 +5,23 @@ is available - all run in an isolated subprocess (or through jedi's
 own environment abstraction) using the project's own resolved
 interpreter, never Mini's, so a module only installed in the
 project's virtualenv isn't wrongly treated as unavailable, and a slow
-or broken one can't freeze the editor."""
+or broken one can't freeze the editor.
 
+jedi itself runs in-process rather than in a subprocess, and its own
+first-time warm-up plus a genuine parse/inference pass over a real
+file measured anywhere from ~100ms to over a second - clearly
+noticeable run synchronously on Mini's single-threaded key-reading
+loop. `_start_background_jedi_completion`/`_prewarm_jedi` below move
+that work to a daemon thread instead: a caller waits only a short,
+bounded moment for it (still instant when jedi's already warm/fast),
+falls back to Mini's own heuristics otherwise, and picks the real
+answer up on a later render once the thread finishes - woken up on
+its own via `_notify_suggestion_ready` even if the user's gone idle
+waiting for it, rather than only ever refreshing on the next keypress."""
+
+import os
 import subprocess
+import threading
 
 _IMPORT_CHECK_SCRIPT = (
     "import sys, importlib\n"
@@ -200,3 +214,79 @@ def _jedi_completions(source_text, file_name, line, column, python_path):
         }
     except Exception:
         return None
+
+
+_suggestion_wakeup_write_fd = None
+
+
+def set_suggestion_wakeup_fd(fd):
+    """Called by text_editor.py's `run()` so a background jedi job
+    (below) can wake the main loop's `read_key()` up on its own once
+    it finishes, the same way run_panel.py/updater.py already do for
+    their own background work."""
+    global _suggestion_wakeup_write_fd
+    _suggestion_wakeup_write_fd = fd
+
+
+def _notify_suggestion_ready():
+    if _suggestion_wakeup_write_fd is not None:
+        try:
+            os.write(_suggestion_wakeup_write_fd, b"x")
+        except OSError:
+            pass
+
+
+def _start_background_jedi_completion(
+    source_text, file_name, line, column, python_path,
+):
+    """Runs `_jedi_completions` on a daemon thread instead of blocking
+    the caller. Returns (event, box): `event` is set once `box[0]`
+    holds the result - a caller waits on it with a short timeout to
+    still get the answer immediately when jedi's fast enough, or moves
+    on (falling back to Mini's own heuristics) and checks back later
+    otherwise, picking the real answer up on whatever render happens
+    next - `_notify_suggestion_ready` wakes the main loop up on its
+    own for this even if the user's gone idle waiting for it."""
+    event = threading.Event()
+    box = [None]
+
+    def worker():
+        box[0] = _jedi_completions(
+            source_text, file_name, line, column, python_path,
+        )
+        event.set()
+        _notify_suggestion_ready()
+
+    threading.Thread(target=worker, daemon=True).start()
+    return event, box
+
+
+_jedi_prewarmed = False
+
+
+def _prewarm_jedi(python_path):
+    """Best-effort background warm-up for jedi's own first-use cost -
+    importing it, creating its Environment, and priming whatever
+    internal caches make its *first* completion of a session run
+    roughly 10x slower than every later one (measured: over a second,
+    against ~100ms once warm). Kicked off right when a `.py` file is
+    opened, so that one-time hit lands while the user is still reading
+    the file instead of the first time they actually try to complete
+    something. A daemon thread, same as the real completions above -
+    never touches editor state, and any failure is silently ignored,
+    exactly as if jedi had never been tried."""
+    def worker():
+        global _jedi_prewarmed
+        environment = _jedi_environment(python_path)
+        if environment is None or _jedi_prewarmed:
+            return
+        _jedi_prewarmed = True
+        try:
+            jedi = _get_jedi()
+            jedi.Script(
+                code="import os\nos.", environment=environment,
+            ).complete(2, 3)
+        except Exception:
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()

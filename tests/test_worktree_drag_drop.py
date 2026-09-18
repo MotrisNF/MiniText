@@ -130,6 +130,27 @@ def test_dragging_over_a_target_sets_status_and_drag_target():
         assert fake._mouse_state.drag_target is None
 
 
+def test_dropping_onto_an_existing_name_refuses_instead_of_overwriting():
+    """Regression: shutil.move() on its own silently replaces an
+    existing destination file - dragging a.txt into 'sub' when
+    'sub/a.txt' already existed used to destroy it with no warning."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.mkdir(os.path.join(tmp, "sub"))
+        a_path = os.path.join(tmp, "a.txt")
+        with open(a_path, "w", encoding="utf-8") as file:
+            file.write("dragged content")
+        existing = os.path.join(tmp, "sub", "a.txt")
+        with open(existing, "w", encoding="utf-8") as file:
+            file.write("important, pre-existing content")
+        fake = FakePanel(tmp)
+        fake._mouse_state.drag_origin = a_path
+        fake._handle_worktree_drop(fake._row_for("sub"))
+        assert "already exists" in fake.status
+        assert os.path.exists(a_path)  # never moved away from its spot
+        with open(existing, encoding="utf-8") as file:
+            assert file.read() == "important, pre-existing content"
+
+
 TESTS = [
     test_drop_on_directory_moves_inside_it,
     test_drop_on_a_file_moves_to_its_parent_directory,
@@ -137,4 +158,5 @@ TESTS = [
     test_dropping_a_multiselection_moves_every_selected_entry,
     test_dropping_a_multiselection_sends_names_as_a_list,
     test_dragging_over_a_target_sets_status_and_drag_target,
+    test_dropping_onto_an_existing_name_refuses_instead_of_overwriting,
 ]

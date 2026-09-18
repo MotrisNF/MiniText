@@ -31,6 +31,7 @@ def _get_terminal_size():
 _resize_wakeup_fd = None
 _run_output_fd = None
 _update_check_fd = None
+_suggestion_ready_fd = None
 
 
 def _enable_resize_wakeup():
@@ -137,6 +138,8 @@ def read_key(timeout=None):
         watch_fds.append(_run_output_fd)
     if _pending_byte is None and _update_check_fd is not None:
         watch_fds.append(_update_check_fd)
+    if _pending_byte is None and _suggestion_ready_fd is not None:
+        watch_fds.append(_suggestion_ready_fd)
     if _pending_byte is None:
         try:
             ready, _, _ = select.select(watch_fds, [], [], timeout)
@@ -158,6 +161,12 @@ def read_key(timeout=None):
             except OSError:
                 pass
             return "UPDATE_AVAILABLE"
+        if _suggestion_ready_fd is not None and _suggestion_ready_fd in ready:
+            try:
+                os.read(_suggestion_ready_fd, 4096)
+            except OSError:
+                pass
+            return "SUGGESTION_READY"
 
     first_byte = _read_stdin_byte(stdin_fd)
     if not first_byte:
@@ -307,3 +316,12 @@ def set_update_check_fd(fd):
     to import updater.py back."""
     global _update_check_fd
     _update_check_fd = fd
+
+
+def set_suggestion_ready_fd(fd):
+    """Called by python_introspection.py so read_key()'s select() loop
+    also wakes up when a background jedi completion (see
+    `_start_background_jedi_completion`) finishes while the user is
+    idle - without terminal.py needing to import that module back."""
+    global _suggestion_ready_fd
+    _suggestion_ready_fd = fd
