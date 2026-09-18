@@ -1136,6 +1136,11 @@ class RenderMixin:
             # 3 (not 2) columns past the box's own left edge.
             cursor_column = name_dialog_box["left"] + 3 + visible_len
         elif self.worktree.focused:
+            # The current entry is already shown via its own
+            # highlight/marker (see _worktree_body_lines) - a second,
+            # blinking terminal cursor sitting on top of it besides
+            # that is just visual noise, never actually needed here.
+            hide_cursor = True
             cursor_row = 2 + 1 + self.worktree.cursor - self.worktree.scroll
             cursor_column = 1
         elif self.run_panel.focused:

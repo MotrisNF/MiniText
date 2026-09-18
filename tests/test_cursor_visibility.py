@@ -72,8 +72,25 @@ def test_cursor_shows_again_once_the_blank_buffer_has_typed_content():
     assert "\x1b[?25h" in frame
 
 
+def test_cursor_is_hidden_while_the_worktree_panel_is_focused():
+    """The current entry already has its own highlight/marker (see
+    worktree.py's own `_worktree_body_lines`) - a second, blinking
+    terminal cursor on top of it is just noise, needed even less than
+    on the blank placeholder buffer above."""
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "a.py"), "w", encoding="utf-8").close()
+        editor = TextEditor(file_name=None)
+        editor.worktree.root = tmp
+        editor.worktree.visible = True
+        editor.worktree.focused = True
+        frame = _render_frame(editor)
+        assert "\x1b[?25l" in frame
+        assert "\x1b[?25h" not in frame
+
+
 TESTS = [
     test_cursor_is_hidden_on_the_blank_placeholder_buffer,
     test_cursor_shows_normally_once_a_real_file_is_open,
     test_cursor_shows_again_once_the_blank_buffer_has_typed_content,
+    test_cursor_is_hidden_while_the_worktree_panel_is_focused,
 ]
