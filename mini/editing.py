@@ -304,6 +304,7 @@ class BufferEditMixin:
             self.selection_anchor = (anchor_line + direction, anchor_column)
 
     def _paste(self, text):
+        self.selection_anchor = None
         self._snapshot()
         pasted_lines = text.split("\n")
         current_line = self.lines[self.line]
@@ -324,6 +325,13 @@ class BufferEditMixin:
         self.column = len(last_line)
 
     def _insert(self, character):
+        # A plain mouse click arms `selection_anchor` at the cursor
+        # (see mouse.py) so a *drag* right after it can select - but
+        # typing instead of dragging must drop it, or it stays fixed
+        # at the click point while the cursor moves ahead with every
+        # character typed, turning the newly typed text itself into
+        # what looks like a growing selection.
+        self.selection_anchor = None
         current_line = self.lines[self.line]
         if (
             character in PAIRS.values()
@@ -354,6 +362,7 @@ class BufferEditMixin:
     def _backspace(self):
         if not self.column and not self.line:
             return
+        self.selection_anchor = None
         self._snapshot()
         if self.column:
             current_line = self.lines[self.line]
@@ -408,6 +417,7 @@ class BufferEditMixin:
         return self.column - 1
 
     def _delete_forward(self):
+        self.selection_anchor = None
         current_line = self.lines[self.line]
         if self.column < len(current_line):
             self._snapshot()
@@ -433,6 +443,7 @@ class BufferEditMixin:
         return line[:count]
 
     def _new_line(self):
+        self.selection_anchor = None
         self._snapshot()
         current_line = self.lines[self.line]
         before = current_line[:self.column]

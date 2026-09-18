@@ -3,6 +3,45 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## 1.11.4 - 2026-09-18
+
+- Fixed `_save()` permanently blanking `file_name` to `""` (not back
+  to `None`) after cancelling the "Name of the file:" prompt (Enter on
+  an empty line, or Esc) - every save attempt afterward skipped the
+  "ask for a name" step entirely and crashed trying to
+  `open("", "w")`.
+- Fixed a Ctrl+click multi-selection in the worktree panel staying
+  armed and visibly highlighted after leaving the panel (clicking into
+  the editor, opening a file, entering command/search/Insert) -
+  nothing ever cleared it, so it could resurface later on whatever
+  still matched those paths, with no apparent reason why.
+- Fixed a mouse click's `selection_anchor` (armed so a *drag* right
+  after it can select text) persisting through ordinary typing instead
+  of dragging - it stayed fixed at the click point while the cursor
+  moved ahead with every character typed, making the text just typed
+  look like it was progressively selecting itself.
+- Added multi-line-aware syntax highlighting: a Python triple-quoted
+  docstring (`"""..."""`/`'''...'''`) or a C/C++ `/* ... */` comment
+  spanning several lines is now colored as one block - including its
+  own opening line, which previously fell through single-line
+  tokenizing as a stray "empty string" plus an uncolored quote
+  character. Tracked incrementally per line and invalidated only from
+  wherever an edit actually lands, so it stays fast even in large
+  files.
+- Added an MIT license (`LICENSE`) and reorganized the README for
+  readability: a table of contents, build/mouse-support badges, and
+  clearer section grouping, with no content removed.
+- Internal: every module now lives under a `mini/` package directory
+  instead of as loose files at the repo root (`install.sh`/
+  `updater.py`/`main.py` updated to match, preserving git history via
+  `git mv`). `text_editor.py`'s ~300-line `run()` key dispatcher is
+  now a thin loop delegating to 7 per-context handler methods
+  (`_handle_help_mode_key`, `_handle_run_panel_key`, etc. - see
+  `run_refactor.md`, since removed now that this landed), and the
+  worktree/run-panel/mouse-hover attributes it used to share with
+  those handlers are grouped into `WorktreeState`/`RunPanelState`/
+  `MouseState` objects instead of ~30 loose `self.*` attributes.
+
 ## 1.11.3 - 2026-09-17
 
 - Fixed a second, deeper case of the overlay boxes leaving a stale
