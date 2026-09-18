@@ -1123,6 +1123,7 @@ class RenderMixin:
         )
 
         output.append("\x1b[?25l")
+        hide_cursor = False
         if name_dialog_box is not None:
             inner_width = name_dialog_box["width"] - 4
             value = self._name_dialog["value"]
@@ -1143,6 +1144,15 @@ class RenderMixin:
                 editor_col_offset + len(self.run_panel.pending_text) + 1
             )
         elif self.command is None and self.search_query is None:
+            # The blank/unnamed/unmodified "MiniText" placeholder (see
+            # tabs.py's own `_is_blank_buffer`) isn't a real file being
+            # edited - showing a blinking cursor sitting in it just
+            # looks like something's there to type into, when
+            # entering Insert on it is refused outright (see
+            # text_editor.py's own `i` handling). Purely cosmetic:
+            # `cursor_row`/`cursor_column` are still computed exactly
+            # as before, just never actually shown.
+            hide_cursor = self._is_blank_buffer()
             # Which wrap row the cursor's own line/column falls on -
             # normally the only (or first) row for that line; keeps
             # scanning past an exact-but-wrong-boundary match so a
@@ -1190,7 +1200,8 @@ class RenderMixin:
             output.extend(self._suggestion_dropdown_output(
                 cursor_row, cursor_column, terminal_width, terminal_height
             ))
-        output.append(f"\x1b[{cursor_row};{cursor_column}H\x1b[?25h")
+        cursor_visibility = "" if hide_cursor else "\x1b[?25h"
+        output.append(f"\x1b[{cursor_row};{cursor_column}H{cursor_visibility}")
         sys.stdout.write("".join(output))
         sys.stdout.flush()
 
