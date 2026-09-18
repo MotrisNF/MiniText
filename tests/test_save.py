@@ -13,9 +13,10 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
 ))
 from commands import CommandMixin  # noqa: E402
+from tabs import TabsMixin  # noqa: E402
 
 
-class FakeEditor(CommandMixin):
+class FakeEditor(CommandMixin, TabsMixin):
     def __init__(self, file_name, next_name=""):
         self.file_name = file_name
         self.lines = ["x"]
@@ -62,8 +63,23 @@ def test_providing_a_name_saves_the_file():
         assert fake.modified is False
 
 
+def test_saving_the_blank_placeholder_buffer_never_prompts_for_a_name():
+    """:w on the empty, unnamed "MiniText" tab - nothing has actually
+    been opened or typed - used to still prompt "Name of the file:"
+    and happily create an empty file wherever the user typed, even
+    though there was nothing meaningful to save in the first place."""
+    fake = FakeEditor(None)
+    fake.lines = [""]
+    fake.modified = False
+    fake._next_name = "should-never-be-used.txt"
+    assert fake._save() is False
+    assert fake.status == "Open or create a file first"
+    assert fake.file_name is None
+
+
 TESTS = [
     test_cancelling_the_name_prompt_leaves_file_name_none,
     test_saving_again_after_a_cancelled_prompt_still_asks_for_a_name,
     test_providing_a_name_saves_the_file,
+    test_saving_the_blank_placeholder_buffer_never_prompts_for_a_name,
 ]

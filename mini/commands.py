@@ -14,6 +14,14 @@ class CommandMixin:
     def _save(self):
         is_new_file = False
         if self.file_name is None:
+            if self._is_blank_buffer():
+                # Nothing has actually been opened or typed yet - the
+                # placeholder "MiniText" tab itself - so there's
+                # nothing here worth naming and saving; asking for a
+                # file name would just create an empty file for no
+                # reason.
+                self.status = "Open or create a file first"
+                return False
             self.status = "Name of the file:"
             self._render()
             new_name = self._read_command_line()

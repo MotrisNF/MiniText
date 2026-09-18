@@ -11,10 +11,11 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
 ))
 from commands import CommandMixin  # noqa: E402
+from tabs import TabsMixin  # noqa: E402
 from worktree import WorktreePanelMixin, WorktreeState  # noqa: E402
 
 
-class FakeEditor(CommandMixin, WorktreePanelMixin):
+class FakeEditor(CommandMixin, TabsMixin, WorktreePanelMixin):
     def __init__(self, lines, worktree_root):
         self.lines = list(lines)
         self.file_name = None
