@@ -115,13 +115,22 @@ def _matches_by_prefix(pool, prefix):
 _LINE_WORD_CACHE_LIMIT = 20000
 
 
-def _is_inside_string_or_comment(line, column):
+def _is_inside_string_or_comment(line, column, entry_covers_up_to=0):
     """Whether `column` sits inside a string literal or a comment,
-    scanning from the start of `line` - so an unterminated string
-    being typed still counts, even though it has no closing quote
-    yet for a regex to match against."""
+    scanning from `entry_covers_up_to` (0 by default) - so an
+    unterminated string being typed still counts, even though it has
+    no closing quote yet for a regex to match against.
+
+    `entry_covers_up_to` (see rendering.py's `_comment_state_for`) is
+    how much of `line`'s own start is already known to be inside a
+    docstring carried over from an earlier line - scanning starts
+    fresh from there instead of column 0, so a quote character inside
+    that region doesn't get misread as opening/closing a string of its
+    own."""
+    if column < entry_covers_up_to:
+        return True
     quote = None
-    index = 0
+    index = entry_covers_up_to
     while index < column and index < len(line):
         character = line[index]
         if quote:
@@ -663,7 +672,8 @@ class SuggestionMixin:
 
     def _compute_python_suggestion_matches(self):
         line = self.lines[self.line]
-        if _is_inside_string_or_comment(line, self.column):
+        _, entry_covers_up_to, _ = self._comment_state_for(self.line)
+        if _is_inside_string_or_comment(line, self.column, entry_covers_up_to):
             return []
         if self.column < len(line) and _is_word_char(line[self.column]):
             return []
@@ -680,7 +690,9 @@ class SuggestionMixin:
             elif (
                 dot_index > 0
                 and line[dot_index - 1] in ("'", '"')
-                and _is_inside_string_or_comment(line, dot_index - 1)
+                and _is_inside_string_or_comment(
+                    line, dot_index - 1, entry_covers_up_to,
+                )
             ):
                 # The dot follows a complete string literal directly
                 # (e.g. "".foo or 'x'.foo), not a named variable -
@@ -757,7 +769,10 @@ class SuggestionMixin:
             else:
                 headers = self._local_header_names()
             return _matches_by_prefix(headers, already_typed)
-        if _is_inside_c_string_or_comment(line, self.column):
+        _, entry_covers_up_to, _ = self._comment_state_for(self.line)
+        if _is_inside_c_string_or_comment(
+            line, self.column, entry_covers_up_to
+        ):
             return []
         prefix = self._current_word_prefix()
         if len(prefix) < MIN_SUGGESTION_PREFIX:

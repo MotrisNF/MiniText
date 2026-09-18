@@ -10,30 +10,21 @@ sys.path.insert(0, os.path.join(
 ))
 import terminal  # noqa: E402
 import theme  # noqa: E402
-from worktree import WorktreePanelMixin  # noqa: E402
+from mouse import MouseState  # noqa: E402
+from worktree import WorktreePanelMixin, WorktreeState  # noqa: E402
 
 
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
-        self.worktree_root = root
-        self.worktree_root_collapsed = False
-        self.worktree_show_hidden = True
-        self.worktree_expanded = set()
-        self.worktree_cursor = 0
-        self.worktree_scroll = 0
-        self.worktree_focused = True
-        self.worktree_visible = True
-        self.worktree_visible_because_of_focus = False
-        self.worktree_new_entry_dir = root
-        self.worktree_selected_entries = set()
+        self.worktree = WorktreeState(root)
+        self.worktree.show_hidden = True
+        self.worktree.focused = True
+        self.worktree.visible = True
         self._worktree_entries_cache = None
         self.file_name = None
         self.lines = [""]
         self.modified = False
-        self._hovered_worktree_delete = None
-        self._hovered_worktree_row = None
-        self._hovered_worktree_button = None
-        self._worktree_drag_origin = None
+        self._mouse_state = MouseState()
 
 
 def _make_event(code, col, row, final="M"):
@@ -63,10 +54,10 @@ def test_ctrl_click_toggles_selection_without_moving_cursor():
         fake = FakePanel(tmp)
         b_path = os.path.join(tmp, "b.txt")
         fake._handle_worktree_click(2, ctrl_held=True)  # row 2 -> b.txt
-        assert fake.worktree_selected_entries == {b_path}
-        assert fake.worktree_cursor == 0  # untouched by a ctrl+click
+        assert fake.worktree.selected_entries == {b_path}
+        assert fake.worktree.cursor == 0  # untouched by a ctrl+click
         fake._handle_worktree_click(2, ctrl_held=True)  # toggle off
-        assert fake.worktree_selected_entries == set()
+        assert fake.worktree.selected_entries == set()
 
 
 def test_plain_click_on_an_unselected_entry_clears_the_multiselection():
@@ -76,9 +67,9 @@ def test_plain_click_on_an_unselected_entry_clears_the_multiselection():
         open(os.path.join(tmp, "c.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         fake._handle_worktree_click(2, ctrl_held=True)  # select b.txt
-        assert fake.worktree_selected_entries
+        assert fake.worktree.selected_entries
         fake._handle_worktree_click(3)  # plain click on c.txt (unselected)
-        assert fake.worktree_selected_entries == set()
+        assert fake.worktree.selected_entries == set()
 
 
 def test_plain_click_on_an_already_selected_entry_preserves_it():
@@ -91,10 +82,10 @@ def test_plain_click_on_an_already_selected_entry_preserves_it():
         open(os.path.join(tmp, "b.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         fake._handle_worktree_click(2, ctrl_held=True)  # select b.txt
-        selection_before = set(fake.worktree_selected_entries)
+        selection_before = set(fake.worktree.selected_entries)
         assert selection_before
         fake._handle_worktree_click(2)  # plain click on the same b.txt
-        assert fake.worktree_selected_entries == selection_before
+        assert fake.worktree.selected_entries == selection_before
 
 
 def test_rendering_a_multiselected_row_does_not_crash():
@@ -108,7 +99,7 @@ def test_rendering_a_multiselected_row_does_not_crash():
         b_path = os.path.join(tmp, "b.txt")
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_selected_entries = {b_path}  # cursor stays on a.txt
+        fake.worktree.selected_entries = {b_path}  # cursor stays on a.txt
         lines = fake._worktree_body_lines(5)  # must not raise
         assert lines[2].startswith(theme.WORD_MATCH_START)
         assert lines[2].endswith(theme.WORD_MATCH_END)
@@ -129,7 +120,7 @@ def test_ctrl_drag_paints_a_selection_across_every_row_it_crosses():
         fake._worktree_ctrl_drag_select(2)  # b.txt
         fake._worktree_ctrl_drag_select(2)  # passing back over b.txt again
         fake._worktree_ctrl_drag_select(3)  # c.txt
-        assert fake.worktree_selected_entries == {a_path, b_path, c_path}
+        assert fake.worktree.selected_entries == {a_path, b_path, c_path}
 
 
 def test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too():
@@ -142,11 +133,27 @@ def test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too():
         open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         a_path = os.path.join(tmp, "a.txt")
-        fake.worktree_cursor = 1  # entries[0] is the root; 1 is a.txt
-        fake.worktree_selected_entries = {a_path}  # cursor is also a.txt
+        fake.worktree.cursor = 1  # entries[0] is the root; 1 is a.txt
+        fake.worktree.selected_entries = {a_path}  # cursor is also a.txt
         lines = fake._worktree_body_lines(5)
         assert theme.WORD_MATCH_START in lines[1]
         assert theme.CURRENT_LINE_INDICATOR_COLOR in lines[1]
+
+
+def test_leaving_the_panel_clears_a_stale_multiselection():
+    """Regression: a Ctrl+click multi-selection used to survive
+    forever once the panel lost focus (clicking into the editor,
+    opening a file, entering command/search/insert mode) - nothing
+    ever cleared it, so entries stayed visibly "selected" in the
+    panel long after the user moved on, resurfacing later on whatever
+    still matched those paths with no obvious reason why."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a_path = os.path.join(tmp, "a.txt")
+        open(a_path, "w", encoding="utf-8").close()
+        fake = FakePanel(tmp)
+        fake.worktree.selected_entries = {a_path}
+        fake._release_worktree_focus()
+        assert fake.worktree.selected_entries == set()
 
 
 TESTS = [
@@ -157,4 +164,5 @@ TESTS = [
     test_rendering_a_multiselected_row_does_not_crash,
     test_ctrl_drag_paints_a_selection_across_every_row_it_crosses,
     test_ctrl_clicking_the_cursor_row_shows_it_as_selected_too,
+    test_leaving_the_panel_clears_a_stale_multiselection,
 ]

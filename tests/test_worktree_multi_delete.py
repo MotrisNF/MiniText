@@ -9,18 +9,13 @@ import tempfile
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
 ))
-from worktree import WorktreePanelMixin  # noqa: E402
+from worktree import WorktreePanelMixin, WorktreeState  # noqa: E402
 
 
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
-        self.worktree_root = root
-        self.worktree_root_collapsed = False
-        self.worktree_show_hidden = True
-        self.worktree_expanded = set()
-        self.worktree_cursor = 0
-        self.worktree_scroll = 0
-        self.worktree_selected_entries = set()
+        self.worktree = WorktreeState(root)
+        self.worktree.show_hidden = True
         self._worktree_entries_cache = None
         self.file_name = None
         self.confirm_calls = []
@@ -39,14 +34,14 @@ def test_deleting_a_selected_entry_deletes_the_whole_selection():
         open(a_path, "w", encoding="utf-8").close()
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_selected_entries = {a_path, b_path}
+        fake.worktree.selected_entries = {a_path, b_path}
         entries = fake._worktree_entries()
-        fake.worktree_cursor = 1  # entries[0] is the root itself; 1 is a.txt
+        fake.worktree.cursor = 1  # entries[0] is the root itself; 1 is a.txt
         fake._worktree_delete(entries)
         assert not os.path.exists(a_path)
         assert not os.path.exists(b_path)
         assert len(fake.confirm_calls) == 1
-        assert fake.worktree_selected_entries == set()
+        assert fake.worktree.selected_entries == set()
 
 
 def test_deleting_an_unselected_entry_only_deletes_that_one():
@@ -56,13 +51,13 @@ def test_deleting_an_unselected_entry_only_deletes_that_one():
         open(a_path, "w", encoding="utf-8").close()
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_selected_entries = {b_path}  # a.txt not selected
+        fake.worktree.selected_entries = {b_path}  # a.txt not selected
         entries = fake._worktree_entries()
-        fake.worktree_cursor = 1  # entries[0] is the root itself; 1 is a.txt
+        fake.worktree.cursor = 1  # entries[0] is the root itself; 1 is a.txt
         fake._worktree_delete(entries)
         assert not os.path.exists(a_path)
         assert os.path.exists(b_path)
-        assert fake.worktree_selected_entries == {b_path}
+        assert fake.worktree.selected_entries == {b_path}
 
 
 def test_deleting_a_selection_sends_names_as_a_list_not_a_joined_string():
@@ -77,9 +72,9 @@ def test_deleting_a_selection_sends_names_as_a_list_not_a_joined_string():
         open(a_path, "w", encoding="utf-8").close()
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_selected_entries = {a_path, b_path}
+        fake.worktree.selected_entries = {a_path, b_path}
         entries = fake._worktree_entries()
-        fake.worktree_cursor = 1
+        fake.worktree.cursor = 1
         fake._worktree_delete(entries)
         assert fake.confirm_calls == ["Delete 2 items? (y/n)"]
         assert fake.confirm_items == [["a.txt", "b.txt"]]
@@ -91,7 +86,7 @@ def test_deleting_a_single_entry_still_uses_the_plain_prompt():
         open(a_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         entries = fake._worktree_entries()
-        fake.worktree_cursor = 1
+        fake.worktree.cursor = 1
         fake._worktree_delete(entries)
         assert fake.confirm_calls == ["Delete file 'a.txt'? (y/n)"]
         assert fake.confirm_items == [None]

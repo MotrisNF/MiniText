@@ -4,7 +4,7 @@ the help screen, and the main render() loop itself. Mouse event
 dispatch lives in mouse.py, and overlay-box geometry/rendering (the
 "Close Mini" button, the welcome banner, the name/confirm dialogs) in
 dialogs.py - both split out of here, and both still driven from
-`render()`/`self._mouse_layout` below."""
+`render()`/`self._mouse_state.layout` below."""
 
 import functools
 import os
@@ -14,14 +14,15 @@ import theme
 from autocomplete import _INCLUDE_LINE_PATTERN, MAX_SUGGESTION_DROPDOWN_ITEMS
 from editing import BRACKET_PAIRS, CLOSING_TO_OPENING, QUOTE_CHARACTERS
 from highlighting import (
-    _highlight_c, _highlight_python, is_in_triple_quoted_string,
+    _c_line_exit_state, _highlight_c, _highlight_python,
+    _python_line_exit_state, is_in_triple_quoted_string,
 )
 from languages import language_for
 from terminal import _get_terminal_size
 from worktree import MIN_EDITOR_WIDTH, WORKTREE_SEPARATOR_WIDTH, WORKTREE_WIDTH
 
 
-def _no_highlight(text, lookahead=""):
+def _no_highlight(text, lookahead="", carryover=0, tail_carryover=0):
     return text
 
 
@@ -102,7 +103,11 @@ class RenderMixin:
                 else theme.INACTIVE_TAB_COLOR
             )
             base = f"{background}{theme.TEXT_COLOR}"
-            if close_offset is not None and index == self._hovered_tab_close:
+            is_hovered_close = (
+                close_offset is not None
+                and index == self._mouse_state.tab_close
+            )
+            if is_hovered_close:
                 before = text[:close_offset]
                 close_char = text[close_offset]
                 after = text[close_offset + 1:]
@@ -258,6 +263,95 @@ class RenderMixin:
     def _line_row_count(self, line_index, content_width):
         return len(self._wrap_points(line_index, content_width)) - 1
 
+    def _comment_state_for(self, line_index):
+        """(entry_state, close_column, open_column) for
+        `self.lines[line_index]` - see highlighting.py's own module
+        docstring. Lazily extends `self._comment_state` (one entry per
+        line: what's open *entering* it) up through `line_index`, so a
+        full-file rescan only ever happens once per line, the first
+        time it's actually rendered - `editing.py`'s `_snapshot`/
+        `_swap_history` are what invalidate the tail of it on an edit.
+
+        `close_column`/`open_column` are raw columns into
+        `self.lines[line_index]` - see the two per-language scanners'
+        own docstrings for exactly what each means; both are 0/None,
+        respectively, for a plain line with nothing carried in or
+        newly opened."""
+        language = language_for(self.file_name)
+        if language == "python":
+            scanner = _python_line_exit_state
+        elif language in ("c", "cpp"):
+            scanner = _c_line_exit_state
+        else:
+            return None, 0, None
+        if self._comment_state_language != language:
+            # The cache's own entries were computed under whatever
+            # language used to apply (e.g. a file renamed to a
+            # different extension while open) - meaningless read
+            # under a different one's scanner, so start over.
+            self._comment_state = []
+            self._comment_state_language = language
+        if not self._comment_state:
+            self._comment_state = [None]
+        while len(self._comment_state) <= line_index:
+            previous_index = len(self._comment_state) - 1
+            exit_state, _, _ = scanner(
+                self.lines[previous_index], self._comment_state[-1]
+            )
+            self._comment_state.append(exit_state)
+        entry_state = self._comment_state[line_index]
+        _, close_column, open_column = scanner(
+            self.lines[line_index], entry_state
+        )
+        return entry_state, close_column, open_column
+
+    def _carryover_for(self, line_index, absolute_start, length):
+        """(head, tail): how many of `length` raw characters starting
+        at `absolute_start` on `self.lines[line_index]` are already
+        known to be inside a multi-line construct - `head` carried
+        over from an earlier line, `tail` newly opened somewhere
+        within this same piece and not yet closed. Both 0 for a
+        plain-text file or a piece untouched by either."""
+        _, close_column, open_column = self._comment_state_for(line_index)
+        end = absolute_start + length
+        head = max(0, min(length, close_column - absolute_start))
+        tail = (
+            max(0, min(length, end - open_column))
+            if open_column is not None else 0
+        )
+        return head, tail
+
+    def _apply_highlight(
+        self, raw_text, line_index, absolute_start, apply_highlight,
+        lookahead="",
+    ):
+        """`apply_highlight` on `raw_text` (a raw-column slice of
+        `self.lines[line_index]` starting at `absolute_start`) - first
+        converting it to display text, then working out how much of
+        its own leading/trailing *display* text is already known to be
+        inside a multi-line construct (see `_carryover_for`) so the
+        highlighter can color that much of it as a comment outright
+        instead of tokenizing it normally."""
+        display_text = self._display_text(
+            raw_text, line_index, absolute_start
+        )
+        raw_head, raw_tail = self._carryover_for(
+            line_index, absolute_start, len(raw_text)
+        )
+        if raw_head <= 0 and raw_tail <= 0:
+            return apply_highlight(display_text, lookahead)
+        display_head = len(self._display_text(
+            raw_text[:raw_head], line_index, absolute_start
+        ))
+        display_tail = len(self._display_text(
+            raw_text[len(raw_text) - raw_tail:], line_index,
+            absolute_start + len(raw_text) - raw_tail,
+        ))
+        return apply_highlight(
+            display_text, lookahead,
+            carryover=display_head, tail_carryover=display_tail,
+        )
+
     def _matching_bracket_position(self):
         line = self.lines[self.line]
         if self.column >= len(line):
@@ -269,6 +363,16 @@ class RenderMixin:
             # highlighting apart at whichever one the cursor is on)
             # instead of leaving the whole thing as the one
             # comment-colored block it actually renders as.
+            return None
+        _, close_column, open_column = self._comment_state_for(self.line)
+        if self.column < close_column:
+            # Same reasoning, for a construct carried over from an
+            # earlier line instead of one that opens on this same one.
+            return None
+        if open_column is not None and self.column >= open_column:
+            # And again for one that opens on this same line and
+            # doesn't close - the opening line's own trailing text is
+            # just as much "inside" it as any line after.
             return None
         character = line[self.column]
         if character in BRACKET_PAIRS:
@@ -385,8 +489,8 @@ class RenderMixin:
             bracket_character = text_segment[local_index]
             after = text_segment[local_index + 1:]
             return (
-                apply_highlight(
-                    self._display_text(before, line_index, absolute_start),
+                self._apply_highlight(
+                    before, line_index, absolute_start, apply_highlight,
                     bracket_character,
                 )
                 + theme.BRACKET_MATCH_START
@@ -394,12 +498,12 @@ class RenderMixin:
                     bracket_character, line_index, bracket_column,
                 )
                 + theme.BRACKET_MATCH_END
-                + apply_highlight(self._display_text(
-                    after, line_index, bracket_column + 1,
-                ))
+                + self._apply_highlight(
+                    after, line_index, bracket_column + 1, apply_highlight,
+                )
             )
-        return apply_highlight(
-            self._display_text(text_segment, line_index, absolute_start)
+        return self._apply_highlight(
+            text_segment, line_index, absolute_start, apply_highlight,
         )
 
     def _render_wrapped_segment(
@@ -592,27 +696,30 @@ class RenderMixin:
         input_row = terminal_height - 1
         visible_rows = max(1, terminal_height - 3)
         run_visible = (
-            self.run_process is not None or bool(self.run_output_lines)
-            or bool(self.run_pending_text)
+            self.run_panel.process is not None
+            or bool(self.run_panel.output_lines)
+            or bool(self.run_panel.pending_text)
         )
-        run_display_lines = self.run_output_lines
-        if self.run_pending_text:
-            run_display_lines = run_display_lines + [self.run_pending_text]
+        run_display_lines = self.run_panel.output_lines
+        if self.run_panel.pending_text:
+            run_display_lines = (
+                run_display_lines + [self.run_panel.pending_text]
+            )
         if run_visible:
             run_rows = max(3, visible_rows // 2)
             editor_rows = max(1, visible_rows - run_rows - 1)
         else:
             run_rows = 0
             editor_rows = visible_rows
-        self._run_rows = run_rows
+        self.run_panel.rows = run_rows
         # Where the visible window into run_display_lines starts:
         # pinned (None) always tracks the live tail, like `tail -f`;
         # otherwise it's a fixed absolute position the user scrolled
         # to, which stays put as more output arrives below it.
         run_max_start = max(0, len(run_display_lines) - run_rows)
         run_start = (
-            run_max_start if self.run_view_start is None
-            else min(self.run_view_start, run_max_start)
+            run_max_start if self.run_panel.view_start is None
+            else min(self.run_panel.view_start, run_max_start)
         )
         # The one blank/unnamed/unmodified "MiniText" placeholder tab
         # (see tabs.py's own `_is_blank_buffer`) isn't a real file -
@@ -624,7 +731,7 @@ class RenderMixin:
         gutter_width = (3 if show_indicator else 0) + (
             number_width + 1 if show_number else 0
         )
-        sidebar_visible = self.worktree_visible and terminal_width >= (
+        sidebar_visible = self.worktree.visible and terminal_width >= (
             WORKTREE_WIDTH + WORKTREE_SEPARATOR_WIDTH + MIN_EDITOR_WIDTH
         )
         editor_col_offset = (
@@ -733,7 +840,7 @@ class RenderMixin:
         # screen right now, without redoing all of the layout math
         # above a second time just to answer "what's at row X, column
         # Y".
-        self._mouse_layout = {
+        self._mouse_state.layout = {
             "terminal_height": terminal_height,
             "input_row": input_row,
             "sidebar_visible": sidebar_visible,
@@ -769,8 +876,8 @@ class RenderMixin:
         # stale cells behind on the rows it used to cover otherwise.
         dropdown_will_show = (
             self.mode == "insert" and self.command is None
-            and self.search_query is None and not self.worktree_focused
-            and not self.run_focused
+            and self.search_query is None and not self.worktree.focused
+            and not self.run_panel.focused
             and len(self.suggestion_matches[:MAX_SUGGESTION_DROPDOWN_ITEMS])
             >= 2
         )
@@ -831,9 +938,10 @@ class RenderMixin:
         for row_offset in range(visible_rows):
             if run_visible and row_offset == editor_rows:
                 status_word = (
-                    "running" if self.run_process is not None else "finished"
+                    "running" if self.run_panel.process is not None
+                    else "finished"
                 )
-                if self.run_view_start is None:
+                if self.run_panel.view_start is None:
                     divider_text = f" Output ({status_word}) "
                 else:
                     shown_through = min(
@@ -996,7 +1104,7 @@ class RenderMixin:
         output.append(f"\x1b[{terminal_height};1H\x1b[K")
         if editor_col_offset:
             output.append(f"\x1b[{terminal_height};{editor_col_offset + 1}H")
-        if self.worktree_focused:
+        if self.worktree.focused:
             # worktree_focused sits alongside self.mode (still
             # "visual" underneath) rather than being a mode of its
             # own - shown here as one anyway, so a click or `w` that
@@ -1026,13 +1134,13 @@ class RenderMixin:
             # past the last typed character, not on top of it - sits
             # 3 (not 2) columns past the box's own left edge.
             cursor_column = name_dialog_box["left"] + 3 + visible_len
-        elif self.worktree_focused:
-            cursor_row = 2 + 1 + self.worktree_cursor - self.worktree_scroll
+        elif self.worktree.focused:
+            cursor_row = 2 + 1 + self.worktree.cursor - self.worktree.scroll
             cursor_column = 1
-        elif self.run_focused:
+        elif self.run_panel.focused:
             cursor_row = 2 + editor_rows + run_rows
             cursor_column = (
-                editor_col_offset + len(self.run_pending_text) + 1
+                editor_col_offset + len(self.run_panel.pending_text) + 1
             )
         elif self.command is None and self.search_query is None:
             # Which wrap row the cursor's own line/column falls on -
@@ -1076,8 +1184,8 @@ class RenderMixin:
             self.mode == "insert"
             and self.command is None
             and self.search_query is None
-            and not self.worktree_focused
-            and not self.run_focused
+            and not self.worktree.focused
+            and not self.run_panel.focused
         ):
             output.extend(self._suggestion_dropdown_output(
                 cursor_row, cursor_column, terminal_width, terminal_height

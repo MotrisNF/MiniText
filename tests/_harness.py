@@ -25,3 +25,4 @@ class FakeBuffer(BufferEditMixin):
         self.selection_anchor = None
         self.pending_count = ""
         self.count_locked = False
+        self._comment_state = []

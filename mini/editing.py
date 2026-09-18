@@ -98,6 +98,13 @@ class BufferEditMixin:
         self.undo_stack.append((list(self.lines), self.line, self.column))
         self.redo_stack.clear()
         self.modified = True
+        # Every real mutation happens at or after `self.line` (the one
+        # exception, joining into the *previous* line on a column-0
+        # Backspace, still only reaches back one line) - so entries
+        # before that are still valid; only entries from here on need
+        # recomputing, lazily, the next time they're actually rendered
+        # (see rendering.py's `_comment_state_for`).
+        del self._comment_state[max(0, self.line - 1):]
 
     def _swap_history(
         self, source_stack, dest_stack, empty_status, done_status
@@ -115,6 +122,11 @@ class BufferEditMixin:
         self.selection_anchor = None
         self.modified = True
         self.status = done_status
+        # An undo/redo can restore arbitrarily different content from
+        # anywhere in history - unlike a plain edit, there's no single
+        # "everything before this line is still valid" line to keep,
+        # so the whole cache is dropped and lazily rebuilt on demand.
+        self._comment_state = []
 
     def _undo(self):
         self._swap_history(

@@ -3,7 +3,7 @@ of the editor - the "Close Mini" button and its welcome banner, the
 new-file/new-folder name dialog, and the y/n confirm box (with its own
 optional scrollable file list) - split out of rendering.py, which
 still calls into these from its own `render()` and passes the results
-through `self._mouse_layout` for `mouse.py`'s hit-testing to use."""
+through `self._mouse_state.layout` for `mouse.py`'s hit-testing to use."""
 
 import theme
 from rendering import _CLOSE_HOVER_COLOR
@@ -98,7 +98,7 @@ class DialogMixin:
         left, width, label = box["left"], box["width"], box["label"]
         top_row = 2 + box["top_row_offset"]
         color = (
-            theme.CURRENT_LINE_INDICATOR_COLOR if self._hovered_close_mini
+            theme.CURRENT_LINE_INDICATOR_COLOR if self._mouse_state.close_mini
             else theme.SUGGESTION_COLOR
         )
         top_border = "┌" + "─" * (width - 2) + "┐"

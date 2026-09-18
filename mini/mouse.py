@@ -2,7 +2,7 @@
 region of the last-rendered frame it lands on (`_mouse_target`), and
 what a click, drag, release, or wheel event on each region actually
 does (`_handle_mouse_event`) - split out of rendering.py, which still
-owns the `self._mouse_layout` snapshot this reads every event
+owns the `self._mouse_state.layout` snapshot this reads every event
 against."""
 
 import time
@@ -12,6 +12,28 @@ import time
 # MOUSE_PRESS handling) instead of just moving the cursor like a
 # single click does.
 DOUBLE_CLICK_SECONDS = 0.4
+
+
+class MouseState:
+    """Hover/drag/click tracking shared by worktree.py, mouse.py,
+    dialogs.py, rendering.py, and commands.py - grouped into one
+    object instead of loose `self._hovered_*`/`self._*_drag_*`/
+    `self._mouse_layout`/`self._last_click` attributes on TextEditor."""
+
+    def __init__(self):
+        # A snapshot of the geometry _render() last computed, resolved
+        # against on every mouse event instead of recomputing it here.
+        self.layout = None
+        self.last_click = None
+        self.worktree_button = None
+        self.tab_close = None
+        self.close_mini = False
+        self.worktree_delete = None
+        self.worktree_rename = None
+        self.worktree_row = None
+        self.drag_origin = None
+        self.drag_target = None
+        self.ctrl_drag_active = False
 
 
 class MouseMixin:
@@ -25,9 +47,9 @@ class MouseMixin:
         row_within_output), or ("editor", line_index, raw_column);
         None if it doesn't land on anything the last frame actually
         drew (past the end of the file, say). Resolved against
-        `self._mouse_layout`, a snapshot of the geometry `_render()`
+        `self._mouse_state.layout`, a snapshot of the geometry `_render()`
         last computed, rather than recomputing any of it here."""
-        layout = self._mouse_layout
+        layout = self._mouse_state.layout
         if layout is None:
             return None
         if row == 1:
@@ -94,18 +116,18 @@ class MouseMixin:
         target = self._mouse_target(column, row)
         if target is None:
             if kind == "MOUSE_MOVE":
-                self._hovered_worktree_button = None
-                self._hovered_tab_close = None
-                self._hovered_close_mini = False
-                self._hovered_worktree_delete = None
-                self._hovered_worktree_rename = None
-                self._hovered_worktree_row = None
+                self._mouse_state.worktree_button = None
+                self._mouse_state.tab_close = None
+                self._mouse_state.close_mini = False
+                self._mouse_state.worktree_delete = None
+                self._mouse_state.worktree_rename = None
+                self._mouse_state.worktree_row = None
             elif kind == "MOUSE_DRAG":
-                self._worktree_drag_target = None
+                self._mouse_state.drag_target = None
             elif kind == "MOUSE_RELEASE":
-                self._worktree_drag_origin = None
-                self._worktree_drag_target = None
-                self._worktree_ctrl_drag_active = False
+                self._mouse_state.drag_origin = None
+                self._mouse_state.drag_target = None
+                self._mouse_state.ctrl_drag_active = False
             return
         region = target[0]
         if kind == "MOUSE_RELEASE" and region != "sidebar":
@@ -113,20 +135,20 @@ class MouseMixin:
             # MOUSE_PRESS) releasing outside the sidebar it started
             # in - same "just stop" as releasing inside it, just
             # without sidebar's own MOUSE_RELEASE branch to do it.
-            self._worktree_ctrl_drag_active = False
+            self._mouse_state.ctrl_drag_active = False
         if kind == "MOUSE_MOVE":
-            self._hovered_worktree_button = (
+            self._mouse_state.worktree_button = (
                 target[1] if region == "sidebar_button" else None
             )
-            self._hovered_tab_close = (
+            self._mouse_state.tab_close = (
                 target[1] if region == "tab_bar" and target[2] else None
             )
-            self._hovered_close_mini = region == "close_mini_button"
-            self._hovered_worktree_delete = (
+            self._mouse_state.close_mini = region == "close_mini_button"
+            self._mouse_state.worktree_delete = (
                 self._worktree_delete_hit_test(target[1], target[2])
                 if region == "sidebar" else None
             )
-            self._hovered_worktree_rename = (
+            self._mouse_state.worktree_rename = (
                 self._worktree_rename_hit_test(target[1], target[2])
                 if region == "sidebar" else None
             )
@@ -134,7 +156,7 @@ class MouseMixin:
                 self._worktree_entry_at_row(target[1])
                 if region == "sidebar" else None
             )
-            self._hovered_worktree_row = (
+            self._mouse_state.worktree_row = (
                 hovered_entry[0] if hovered_entry is not None else None
             )
             return
@@ -167,32 +189,32 @@ class MouseMixin:
                     # _worktree_drag_origin, or releasing it later
                     # would try to move whatever was under the mouse
                     # on top of having just multi-selected it.
-                    self._worktree_ctrl_drag_active = (
+                    self._mouse_state.ctrl_drag_active = (
                         ctrl_held and entry is not None
                     )
-                    self._worktree_drag_origin = (
+                    self._mouse_state.drag_origin = (
                         entry[0]
                         if entry is not None and not ctrl_held
-                        and entry[0] != self.worktree_root else None
+                        and entry[0] != self.worktree.root else None
                     )
                     self._handle_worktree_click(target[1], ctrl_held)
             elif kind == "MOUSE_DRAG":
-                if self._worktree_ctrl_drag_active:
+                if self._mouse_state.ctrl_drag_active:
                     self._worktree_ctrl_drag_select(target[1])
                 else:
                     self._update_worktree_drag_status(target[1])
             elif kind == "MOUSE_RELEASE":
-                if self._worktree_ctrl_drag_active:
-                    self._worktree_ctrl_drag_active = False
+                if self._mouse_state.ctrl_drag_active:
+                    self._mouse_state.ctrl_drag_active = False
                 else:
                     self._handle_worktree_drop(target[1])
             elif kind == "MOUSE_WHEEL_UP":
-                self.worktree_cursor = max(0, self.worktree_cursor - 3)
+                self.worktree.cursor = max(0, self.worktree.cursor - 3)
             elif kind == "MOUSE_WHEEL_DOWN":
                 entries = self._worktree_entries()
                 if entries:
-                    self.worktree_cursor = min(
-                        len(entries) - 1, self.worktree_cursor + 3
+                    self.worktree.cursor = min(
+                        len(entries) - 1, self.worktree.cursor + 3
                     )
             return
         if region == "editor":
@@ -201,8 +223,10 @@ class MouseMixin:
             if kind == "MOUSE_PRESS":
                 self._reset_focus_for_click()
                 now = time.monotonic()
-                previous_click = self._last_click
-                self._last_click = (line_index, column_clamped, now)
+                previous_click = self._mouse_state.last_click
+                self._mouse_state.last_click = (
+                    line_index, column_clamped, now
+                )
                 word_bounds = None
                 if (
                     previous_click is not None
@@ -260,7 +284,7 @@ class MouseMixin:
         every click that lands here is exactly the "the user just
         moved on to something else" moment that setting means to
         catch."""
-        if self.run_focused:
+        if self.run_panel.focused:
             self._stop_run()
         self._release_worktree_focus()
         self.command = None

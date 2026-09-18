@@ -29,19 +29,39 @@ WORKTREE_SEPARATOR_WIDTH = 2
 _WORKTREE_BUTTON_LABELS = ("+ New file", "+ New folder")
 
 
+class WorktreeState:
+    """The worktree panel's own state, grouped into one object instead
+    of loose `self.worktree_*` attributes on TextEditor - read/written
+    across worktree.py, mouse.py, dialogs.py, rendering.py,
+    commands.py, run_panel.py, and text_editor.py's own key dispatch."""
+
+    def __init__(self, root):
+        self.root = root
+        self.visible = False
+        self.focused = False
+        self.visible_because_of_focus = False
+        self.root_collapsed = False
+        self.expanded = set()
+        self.selected_entries = set()
+        self.show_hidden = False
+        self.cursor = 0
+        self.scroll = 0
+        self.new_entry_dir = root
+
+
 class WorktreePanelMixin:
 
     def _worktree_root_label(self):
         return os.path.basename(
-            self.worktree_root.rstrip(os.sep)
-        ) or self.worktree_root
+            self.worktree.root.rstrip(os.sep)
+        ) or self.worktree.root
 
     def _worktree_entries(self):
         """The flattened, currently-visible worktree listing (one
         entry per row the panel draws) - `entries[0]` is always
-        `self.worktree_root` itself, a directory entry like any
+        `self.worktree.root` itself, a directory entry like any
         other except it can't be deleted or renamed from here, and
-        collapsing it (`self.worktree_root_collapsed`, not part of
+        collapsing it (`self.worktree.root_collapsed`, not part of
         `worktree_expanded` since it's a single fixed root rather
         than a set of arbitrarily many directories) hides the whole
         rest of the tree at once - the "collapse everything and come
@@ -58,9 +78,9 @@ class WorktreePanelMixin:
             return self._worktree_entries_cache
 
         entries = [
-            (self.worktree_root, self._worktree_root_label(), True, 0)
+            (self.worktree.root, self._worktree_root_label(), True, 0)
         ]
-        show_hidden = self.worktree_show_hidden
+        show_hidden = self.worktree.show_hidden
 
         def walk(directory, depth):
             try:
@@ -74,11 +94,11 @@ class WorktreePanelMixin:
                 if not show_hidden and entry.name.startswith("."):
                     continue
                 entries.append((entry.path, entry.name, entry.is_dir(), depth))
-                if entry.is_dir() and entry.path in self.worktree_expanded:
+                if entry.is_dir() and entry.path in self.worktree.expanded:
                     walk(entry.path, depth + 1)
 
-        if not self.worktree_root_collapsed:
-            walk(self.worktree_root, 1)
+        if not self.worktree.root_collapsed:
+            walk(self.worktree.root, 1)
         self._worktree_entries_cache = entries
         return entries
 
@@ -86,52 +106,63 @@ class WorktreePanelMixin:
         self._worktree_entries_cache = None
 
     def _release_worktree_focus(self):
-        self.worktree_focused = False
-        if self.worktree_visible_because_of_focus:
-            self.worktree_visible = False
-            self.worktree_visible_because_of_focus = False
+        """Leaving the panel - clicking into the editor, opening a
+        file, switching to command/search mode, entering Insert - is
+        the same "moved on to something else" moment a plain click
+        inside the panel already clears the Ctrl+click multi-selection
+        for (see `_handle_worktree_click`). Without this, a
+        multi-selection made once would stay armed and visibly
+        highlighted in the panel indefinitely, resurfacing later on
+        whatever entries happened to still match those paths - not
+        because the user selected them again, but because nothing had
+        ever cleared the old selection in the first place."""
+        self.worktree.focused = False
+        self.worktree.selected_entries = set()
+        if self.worktree.visible_because_of_focus:
+            self.worktree.visible = False
+            self.worktree.visible_because_of_focus = False
 
     def _worktree_expand(self, entries):
         if not entries:
             return
-        path, _, is_directory, _ = entries[self.worktree_cursor]
-        if path == self.worktree_root:
-            if self.worktree_root_collapsed:
-                self.worktree_root_collapsed = False
+        path, _, is_directory, _ = entries[self.worktree.cursor]
+        if path == self.worktree.root:
+            if self.worktree.root_collapsed:
+                self.worktree.root_collapsed = False
                 self._invalidate_worktree_cache()
             return
-        if is_directory and path not in self.worktree_expanded:
-            self.worktree_expanded.add(path)
-            self.worktree_new_entry_dir = path
+        if is_directory and path not in self.worktree.expanded:
+            self.worktree.expanded.add(path)
+            self.worktree.new_entry_dir = path
             self._invalidate_worktree_cache()
 
     def _worktree_collapse(self, entries):
         if not entries:
             return
-        path, _, is_directory, _ = entries[self.worktree_cursor]
-        if path == self.worktree_root:
-            if not self.worktree_root_collapsed:
-                self.worktree_root_collapsed = True
-                self.worktree_new_entry_dir = self.worktree_root
+        path, _, is_directory, _ = entries[self.worktree.cursor]
+        if path == self.worktree.root:
+            if not self.worktree.root_collapsed:
+                self.worktree.root_collapsed = True
+                self.worktree.new_entry_dir = self.worktree.root
                 self._invalidate_worktree_cache()
             return
-        if is_directory and path in self.worktree_expanded:
-            self.worktree_expanded.discard(path)
-            self.worktree_new_entry_dir = os.path.dirname(path)
+        if is_directory and path in self.worktree.expanded:
+            self.worktree.expanded.discard(path)
+            self.worktree.new_entry_dir = os.path.dirname(path)
             self._invalidate_worktree_cache()
 
     def _worktree_activate(self, entries):
         if not entries:
             return
-        path, _, is_directory, _ = entries[self.worktree_cursor]
-        if path == self.worktree_root:
-            if self.worktree_root_collapsed:
+        path, _, is_directory, _ = entries[self.worktree.cursor]
+        if path == self.worktree.root:
+            if self.worktree.root_collapsed:
                 self._worktree_expand(entries)
             else:
                 self._worktree_collapse(entries)
             return
         if is_directory:
-            if path in self.worktree_expanded:
+            if path in self.worktree.expanded:
                 self._worktree_collapse(entries)
             else:
                 self._worktree_expand(entries)
@@ -155,7 +186,7 @@ class WorktreePanelMixin:
         if not name:
             self.status = "Cancelled"
             return
-        new_path = os.path.join(self.worktree_new_entry_dir, name)
+        new_path = os.path.join(self.worktree.new_entry_dir, name)
         try:
             if is_directory:
                 os.mkdir(new_path)
@@ -168,7 +199,7 @@ class WorktreePanelMixin:
         self.status = f"Created {new_path}"
 
     def _worktree_rename(self, entries, index=None):
-        """Renames the entry at `index` (`self.worktree_cursor` if not
+        """Renames the entry at `index` (`self.worktree.cursor` if not
         given) - keyboard `r`, or the row's own hover "✎" in mouse
         mode (see `_worktree_rename_hit_test`). Prompts for a new name
         pre-filled with the current one, then just `os.rename()`s it
@@ -178,9 +209,9 @@ class WorktreePanelMixin:
         treatment `_worktree_create` gives an empty name."""
         if not entries:
             return
-        index = self.worktree_cursor if index is None else index
+        index = self.worktree.cursor if index is None else index
         old_path, old_name, is_directory, _ = entries[index]
-        if old_path == self.worktree_root:
+        if old_path == self.worktree.root:
             self.status = "Can't rename the worktree root"
             return
         new_name = self._prompt_name_dialog("New name", old_name)
@@ -218,13 +249,13 @@ class WorktreePanelMixin:
                 return new_path + path[len(old_path):]
             return path
 
-        self.worktree_expanded = {
-            rewrite(path) for path in self.worktree_expanded
+        self.worktree.expanded = {
+            rewrite(path) for path in self.worktree.expanded
         }
-        self.worktree_selected_entries = {
-            rewrite(path) for path in self.worktree_selected_entries
+        self.worktree.selected_entries = {
+            rewrite(path) for path in self.worktree.selected_entries
         }
-        self.worktree_new_entry_dir = rewrite(self.worktree_new_entry_dir)
+        self.worktree.new_entry_dir = rewrite(self.worktree.new_entry_dir)
         for index, state in enumerate(self.tabs):
             file_name = (
                 self.file_name if index == self.active_tab
@@ -298,7 +329,7 @@ class WorktreePanelMixin:
             column, row = int(column_text), int(row_text)
         except ValueError:
             return False
-        layout = self._mouse_layout
+        layout = self._mouse_state.layout
         box = layout.get("name_dialog_box") if layout else None
         if box is None or box["close_col"] is None:
             return False
@@ -329,23 +360,23 @@ class WorktreePanelMixin:
         return confirmed
 
     def _worktree_delete(self, entries, index=None):
-        """Deletes the entry at `index` (`self.worktree_cursor` if not
+        """Deletes the entry at `index` (`self.worktree.cursor` if not
         given) after confirming - or, if that entry is part of a
-        Ctrl+click multi-selection (`self.worktree_selected_entries`),
+        Ctrl+click multi-selection (`self.worktree.selected_entries`),
         every selected entry together in one confirmation, the same
         "act on the whole selection" idea `_handle_worktree_drop`
         already uses for a drag."""
         if not entries:
             return
-        index = self.worktree_cursor if index is None else index
+        index = self.worktree.cursor if index is None else index
         path, name, is_directory, _ = entries[index]
-        if path == self.worktree_root:
+        if path == self.worktree.root:
             self.status = "Can't delete the worktree root"
             return
-        if path in self.worktree_selected_entries:
+        if path in self.worktree.selected_entries:
             by_path = {entry[0]: entry for entry in entries}
             targets = [
-                by_path[p] for p in sorted(self.worktree_selected_entries)
+                by_path[p] for p in sorted(self.worktree.selected_entries)
                 if p in by_path
             ]
         else:
@@ -361,13 +392,13 @@ class WorktreePanelMixin:
             try:
                 if target_is_directory:
                     shutil.rmtree(target_path)
-                    self.worktree_expanded.discard(target_path)
+                    self.worktree.expanded.discard(target_path)
                 else:
                     os.remove(target_path)
                 deleted.append(target_path)
             except OSError as error:
                 errors.append(f"{target_name}: {error}")
-        self.worktree_selected_entries -= set(deleted)
+        self.worktree.selected_entries -= set(deleted)
         if deleted:
             self._invalidate_worktree_cache()
         if errors:
@@ -379,15 +410,15 @@ class WorktreePanelMixin:
             self.status = f"Deleted {deleted[0]} (still open here, unsaved)"
         elif deleted:
             self.status = f"Deleted {deleted[0]}"
-        if index <= self.worktree_cursor:
-            self.worktree_cursor = max(0, self.worktree_cursor - 1)
+        if index <= self.worktree.cursor:
+            self.worktree.cursor = max(0, self.worktree.cursor - 1)
 
     def _worktree_delete_by_index(self, index):
         """The worktree row's own hover "×" (mouse mode only, see
         `_worktree_delete_hit_test`) - deletes that specific entry
         directly (or its whole multi-selection, if it's part of one -
         see `_worktree_delete`), independent of whatever's currently
-        selected (`self.worktree_cursor`), same confirm-then-delete
+        selected (`self.worktree.cursor`), same confirm-then-delete
         path as pressing `Delete` on the selected one."""
         self._worktree_delete(self._worktree_entries(), index)
 
@@ -395,7 +426,7 @@ class WorktreePanelMixin:
         """The worktree row's own hover "✎" (mouse mode only, see
         `_worktree_rename_hit_test`) - renames that specific entry
         directly, independent of whatever's currently selected
-        (`self.worktree_cursor`), same as `_worktree_delete_by_index`
+        (`self.worktree.cursor`), same as `_worktree_delete_by_index`
         does for the delete "×"."""
         self._worktree_rename(self._worktree_entries(), index)
 
@@ -410,7 +441,7 @@ class WorktreePanelMixin:
         a screen row into a real entry."""
         if panel_row < 0 or not entries:
             return None
-        entry_index = self.worktree_scroll + panel_row
+        entry_index = self.worktree.scroll + panel_row
         if entry_index >= len(entries):
             return None
         return entry_index
@@ -430,7 +461,7 @@ class WorktreePanelMixin:
     def _worktree_ctrl_drag_select(self, panel_row):
         """Adds whichever entry sits at `panel_row` to the multi-
         selection - called on every MOUSE_DRAG while a Ctrl+press-
-        started paint-select (`self._worktree_ctrl_drag_active`, armed
+        started paint-select (`self._mouse_state.ctrl_drag_active`, armed
         in `_handle_mouse_event`) is in progress, so dragging with
         Ctrl held paints a selection across every row the mouse passes
         over (see bugs_conocidos.md: "Ctrl + arrastrar raton ...
@@ -439,8 +470,8 @@ class WorktreePanelMixin:
         selected row mid-drag can't accidentally deselect it - and is
         a silent no-op past the last real entry."""
         entry = self._worktree_entry_at_row(panel_row)
-        if entry is not None and entry[0] != self.worktree_root:
-            self.worktree_selected_entries.add(entry[0])
+        if entry is not None and entry[0] != self.worktree.root:
+            self.worktree.selected_entries.add(entry[0])
 
     def _update_worktree_drag_status(self, panel_row):
         """Live feedback while dragging a worktree entry (mouse mode
@@ -454,24 +485,24 @@ class WorktreePanelMixin:
         `_handle_worktree_drop`) - either way `_worktree_drag_target`
         is cleared, so nothing stays highlighted as a bogus drop
         zone."""
-        if self._worktree_drag_origin is None:
+        if self._mouse_state.drag_origin is None:
             return
         entry = self._worktree_entry_at_row(panel_row)
-        if entry is None or entry[0] == self._worktree_drag_origin:
-            self._worktree_drag_target = None
+        if entry is None or entry[0] == self._mouse_state.drag_origin:
+            self._mouse_state.drag_target = None
             return
         target_path, is_directory = entry
-        self._worktree_drag_target = target_path
+        self._mouse_state.drag_target = target_path
         destination_dir = (
             target_path if is_directory else os.path.dirname(target_path)
         )
         label = os.path.basename(destination_dir) or destination_dir
-        origin_name = os.path.basename(self._worktree_drag_origin)
+        origin_name = os.path.basename(self._mouse_state.drag_origin)
         self.status = f"Moving '{origin_name}': release to move into '{label}'"
 
     def _handle_worktree_drop(self, panel_row):
         """Finishes a worktree drag started by a MOUSE_PRESS on some
-        entry's row (`self._worktree_drag_origin`, armed in
+        entry's row (`self._mouse_state.drag_origin`, armed in
         `_handle_mouse_event`) and released on `panel_row`. Dropping
         on a directory moves the dragged entry (entries, if it was
         part of a Ctrl+click multi-selection - see
@@ -482,9 +513,9 @@ class WorktreePanelMixin:
         included - press and release then land on the exact same row)
         is always a silent no-op, never a confirmation prompt for
         "moving" something nowhere."""
-        origin = self._worktree_drag_origin
-        self._worktree_drag_origin = None
-        self._worktree_drag_target = None
+        origin = self._mouse_state.drag_origin
+        self._mouse_state.drag_origin = None
+        self._mouse_state.drag_target = None
         if origin is None:
             return
         entry = self._worktree_entry_at_row(panel_row)
@@ -500,8 +531,8 @@ class WorktreePanelMixin:
         if destination_dir == os.path.dirname(origin):
             return
         sources = (
-            sorted(self.worktree_selected_entries)
-            if origin in self.worktree_selected_entries else [origin]
+            sorted(self.worktree.selected_entries)
+            if origin in self.worktree.selected_entries else [origin]
         )
         names = [os.path.basename(path) for path in sources]
         destination_label = (
@@ -523,7 +554,7 @@ class WorktreePanelMixin:
                 moved.append(source)
             except (OSError, shutil.Error) as error:
                 errors.append(f"{os.path.basename(source)}: {error}")
-        self.worktree_selected_entries -= set(moved)
+        self.worktree.selected_entries -= set(moved)
         if moved:
             self._invalidate_worktree_cache()
         if errors:
@@ -545,7 +576,7 @@ class WorktreePanelMixin:
             return None
         entries = self._worktree_entries()
         index = self._worktree_row_index(row_offset, entries)
-        if index is None or entries[index][0] == self.worktree_root:
+        if index is None or entries[index][0] == self.worktree.root:
             return None
         return index
 
@@ -587,16 +618,16 @@ class WorktreePanelMixin:
 
         A Ctrl+click is a different action entirely - it never opens/
         expands/collapses anything, it only toggles that one entry in
-        `self.worktree_selected_entries` (for moving several at once,
+        `self.worktree.selected_entries` (for moving several at once,
         see the worktree's own drag & drop), leaving `worktree_cursor`
         and everything else untouched. A plain click always clears
         that multi-selection first, the same "a click starts fresh"
         behavior a desktop file explorer has."""
-        newly_focused = not self.worktree_focused
-        if not self.worktree_visible:
-            self.worktree_visible = True
-            self.worktree_visible_because_of_focus = True
-        self.worktree_focused = True
+        newly_focused = not self.worktree.focused
+        if not self.worktree.visible:
+            self.worktree.visible = True
+            self.worktree.visible_because_of_focus = True
+        self.worktree.focused = True
         if newly_focused:
             self._invalidate_worktree_cache()
         entries = self._worktree_entries()
@@ -608,8 +639,8 @@ class WorktreePanelMixin:
             # The root can't be part of a multi-selection - there's no
             # sensible "delete/move the root along with these" - see
             # _worktree_delete/_handle_worktree_drop.
-            if path != self.worktree_root:
-                self.worktree_selected_entries.symmetric_difference_update(
+            if path != self.worktree.root:
+                self.worktree.selected_entries.symmetric_difference_update(
                     {path}
                 )
             return
@@ -622,12 +653,12 @@ class WorktreePanelMixin:
         # ever see the one entry the drag happened to start on). A
         # click on anything else still clears it, same "a click starts
         # fresh" behavior as before.
-        if path not in self.worktree_selected_entries:
-            self.worktree_selected_entries = set()
+        if path not in self.worktree.selected_entries:
+            self.worktree.selected_entries = set()
         already_selected = (
-            not newly_focused and entry_index == self.worktree_cursor
+            not newly_focused and entry_index == self.worktree.cursor
         )
-        self.worktree_cursor = entry_index
+        self.worktree.cursor = entry_index
         if already_selected or (is_directory and not newly_focused):
             self._worktree_activate(entries)
 
@@ -668,8 +699,8 @@ class WorktreePanelMixin:
         the cursor and part of the multi-selection both are applied
         together - otherwise Ctrl+clicking the cursor's own row gave
         no visible sign it had joined the selection at all."""
-        is_cursor = index == self.worktree_cursor
-        is_multi_selected = path in self.worktree_selected_entries
+        is_cursor = index == self.worktree.cursor
+        is_multi_selected = path in self.worktree.selected_entries
         if is_cursor and is_multi_selected:
             return (
                 theme.WORD_MATCH_START + theme.CURRENT_LINE_INDICATOR_COLOR,
@@ -679,7 +710,7 @@ class WorktreePanelMixin:
             return theme.CURRENT_LINE_INDICATOR_COLOR, theme.COLOR_RESET
         if is_multi_selected:
             return theme.WORD_MATCH_START, theme.WORD_MATCH_END
-        if dragging and path == self._worktree_drag_target:
+        if dragging and path == self._mouse_state.drag_target:
             # Where a drag would land if released right now (see
             # _update_worktree_drag_status) - reverse video, same as
             # the editor's own text selection, rather than a theme
@@ -688,7 +719,7 @@ class WorktreePanelMixin:
             return theme.SELECTION_START, theme.SELECTION_END
         if (
             not dragging and theme.MOUSE_ENABLED
-            and path == self._hovered_worktree_row
+            and path == self._mouse_state.worktree_row
         ):
             # Bare mouse-over feedback (see bugs_conocidos.md: "es
             # necesario que se resalten minimamente") - same reverse-
@@ -699,28 +730,28 @@ class WorktreePanelMixin:
 
     def _worktree_body_lines(self, height):
         entries = self._worktree_entries()
-        self.worktree_cursor = max(
-            0, min(self.worktree_cursor, len(entries) - 1)
+        self.worktree.cursor = max(
+            0, min(self.worktree.cursor, len(entries) - 1)
         )
         button_rows = (
             len(_WORKTREE_BUTTON_LABELS) if theme.MOUSE_ENABLED else 0
         )
         list_height = max(1, height - button_rows)
-        if self.worktree_cursor < self.worktree_scroll:
-            self.worktree_scroll = self.worktree_cursor
-        elif self.worktree_cursor >= self.worktree_scroll + list_height:
-            self.worktree_scroll = self.worktree_cursor - list_height + 1
+        if self.worktree.cursor < self.worktree.scroll:
+            self.worktree.scroll = self.worktree.cursor
+        elif self.worktree.cursor >= self.worktree.scroll + list_height:
+            self.worktree.scroll = self.worktree.cursor - list_height + 1
         lines = []
-        last_visible = min(len(entries), self.worktree_scroll + list_height)
-        dragging = self._worktree_drag_origin is not None
-        for index in range(self.worktree_scroll, last_visible):
+        last_visible = min(len(entries), self.worktree.scroll + list_height)
+        dragging = self._mouse_state.drag_origin is not None
+        for index in range(self.worktree.scroll, last_visible):
             path, name, is_directory, depth = entries[index]
             indent = "  " * depth
             if is_directory:
-                if path == self.worktree_root:
-                    marker = "> " if self.worktree_root_collapsed else "v "
+                if path == self.worktree.root:
+                    marker = "> " if self.worktree.root_collapsed else "v "
                 else:
-                    marker = "v " if path in self.worktree_expanded else "> "
+                    marker = "v " if path in self.worktree.expanded else "> "
                 label = f"{marker}{name}/"
             else:
                 label = f"  {name}"
@@ -730,8 +761,8 @@ class WorktreePanelMixin:
             )
             is_hovered = (
                 theme.MOUSE_ENABLED and not dragging
-                and path == self._hovered_worktree_row
-                and path != self.worktree_root
+                and path == self._mouse_state.worktree_row
+                and path != self.worktree.root
             )
             if is_hovered:
                 # Reserve the row's own last 4 display columns for
@@ -760,11 +791,11 @@ class WorktreePanelMixin:
                 resume = base_color if base_color else theme.COLOR_RESET
                 rename_color = (
                     theme.CURRENT_LINE_INDICATOR_COLOR
-                    if self._hovered_worktree_rename == index else resume
+                    if self._mouse_state.worktree_rename == index else resume
                 )
                 delete_color = (
                     _DELETE_HOVER_COLOR
-                    if self._hovered_worktree_delete == index else resume
+                    if self._mouse_state.worktree_delete == index else resume
                 )
                 # \x1b[22m only ever cancels bold - when `resume` is
                 # theme.SELECTION_START (reverse video, a mode toggle,
@@ -795,7 +826,7 @@ class WorktreePanelMixin:
         ):
             color = (
                 theme.CURRENT_LINE_INDICATOR_COLOR
-                if button_index == self._hovered_worktree_button
+                if button_index == self._mouse_state.worktree_button
                 else theme.SUGGESTION_COLOR
             )
             lines.append(

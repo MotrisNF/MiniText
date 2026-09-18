@@ -11,8 +11,9 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
 ))
 import theme  # noqa: E402
+from mouse import MouseState  # noqa: E402
 from worktree import (  # noqa: E402
-    WorktreePanelMixin, WORKTREE_WIDTH, _DELETE_HOVER_COLOR,
+    WorktreePanelMixin, WorktreeState, WORKTREE_WIDTH, _DELETE_HOVER_COLOR,
 )
 
 
@@ -22,19 +23,10 @@ def _strip_ansi(text):
 
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
-        self.worktree_root = root
-        self.worktree_root_collapsed = False
-        self.worktree_show_hidden = True
-        self.worktree_expanded = set()
-        self.worktree_cursor = 0
-        self.worktree_scroll = 0
+        self.worktree = WorktreeState(root)
+        self.worktree.show_hidden = True
         self._worktree_entries_cache = None
-        self._hovered_worktree_delete = None
-        self._hovered_worktree_rename = None
-        self._hovered_worktree_row = None
-        self.worktree_selected_entries = set()
-        self._hovered_worktree_button = None
-        self._worktree_drag_origin = None
+        self._mouse_state = MouseState()
 
 
 def test_hit_test_only_matches_last_two_columns_of_a_real_entry_row():
@@ -69,7 +61,7 @@ def test_delete_cross_only_shown_on_the_hovered_row():
         # The cross reveals for the whole row (any column), tracked by
         # path (_hovered_worktree_row) - separate from the narrow
         # click hit-test (_hovered_worktree_delete, unset here).
-        fake._hovered_worktree_row = b_path
+        fake._mouse_state.worktree_row = b_path
         lines = [_strip_ansi(line) for line in fake._worktree_body_lines(10)]
         assert all(len(line) == WORKTREE_WIDTH for line in lines)
         assert "×" not in lines[1]
@@ -90,7 +82,7 @@ def test_hover_reveal_is_not_limited_to_the_edge_columns():
         fake = FakePanel(tmp)
         entry = fake._worktree_entry_at_row(1)
         assert entry == (a_path, False)
-        fake._hovered_worktree_row = entry[0]
+        fake._mouse_state.worktree_row = entry[0]
         lines = [_strip_ansi(line) for line in fake._worktree_body_lines(10)]
         assert "×" in lines[1]
 
@@ -106,7 +98,7 @@ def test_hovered_row_gets_a_reverse_video_highlight():
         b_path = os.path.join(tmp, "b.txt")
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._hovered_worktree_row = b_path
+        fake._mouse_state.worktree_row = b_path
         lines = fake._worktree_body_lines(10)
         assert lines[2].startswith("\x1b[7m")
         assert "\x1b[7m" not in lines[1]  # a.txt (the cursor) is untouched
@@ -125,19 +117,19 @@ def test_icons_only_take_their_own_color_precisely_hovered():
         a_path = os.path.join(tmp, "a.txt")
         open(a_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._hovered_worktree_row = a_path
+        fake._mouse_state.worktree_row = a_path
 
         lines = fake._worktree_body_lines(10)
         assert theme.CURRENT_LINE_INDICATOR_COLOR not in lines[1]
         assert _DELETE_HOVER_COLOR not in lines[1]
 
-        fake._hovered_worktree_rename = 1
+        fake._mouse_state.worktree_rename = 1
         lines = fake._worktree_body_lines(10)
         assert theme.CURRENT_LINE_INDICATOR_COLOR in lines[1]
         assert _DELETE_HOVER_COLOR not in lines[1]
 
-        fake._hovered_worktree_rename = None
-        fake._hovered_worktree_delete = 1
+        fake._mouse_state.worktree_rename = None
+        fake._mouse_state.worktree_delete = 1
         lines = fake._worktree_body_lines(10)
         assert theme.CURRENT_LINE_INDICATOR_COLOR not in lines[1]
         assert _DELETE_HOVER_COLOR in lines[1]
@@ -155,8 +147,8 @@ def test_rename_color_does_not_bleed_into_the_delete_icon():
         a_path = os.path.join(tmp, "a.txt")
         open(a_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._hovered_worktree_row = a_path
-        fake._hovered_worktree_rename = 1
+        fake._mouse_state.worktree_row = a_path
+        fake._mouse_state.worktree_rename = 1
         lines = fake._worktree_body_lines(10)
         row = lines[1]
         after_rename_icon = row[row.index("✎") + len("✎\x1b[22m"):]

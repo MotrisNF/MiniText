@@ -13,6 +13,7 @@ from commands import CommandMixin  # noqa: E402
 from dialogs import (  # noqa: E402
     DialogMixin, _CONFIRM_MAX_VISIBLE_ITEMS,
 )
+from mouse import MouseState  # noqa: E402
 
 
 def _strip_ansi(text):
@@ -24,7 +25,8 @@ class FakeRenderer(DialogMixin):
 
 
 class FakeCommands(CommandMixin):
-    pass
+    def __init__(self):
+        self._mouse_state = MouseState()
 
 
 def test_geometry_and_render_stay_aligned():
@@ -51,7 +53,7 @@ def test_press_on_yes_and_no_returns_the_right_answer():
         "buttons_row_offset": 2, "yes_col_start": 5, "yes_col_end": 11,
         "no_col_start": 15, "no_col_end": 20,
     }
-    fake._mouse_layout = {"confirm_box": box}
+    fake._mouse_state.layout = {"confirm_box": box}
     fake._confirm_dialog = {"prompt": "x?", "hovered": None}
     row = box["buttons_row_offset"] + 2
     assert fake._handle_confirm_mouse_event(
@@ -69,7 +71,7 @@ def test_hover_tracks_which_button_the_mouse_is_over():
         "buttons_row_offset": 2, "yes_col_start": 5, "yes_col_end": 11,
         "no_col_start": 15, "no_col_end": 20,
     }
-    fake._mouse_layout = {"confirm_box": box}
+    fake._mouse_state.layout = {"confirm_box": box}
     fake._confirm_dialog = {"prompt": "x?", "hovered": None}
     row = box["buttons_row_offset"] + 2
     yes_col, no_col = box["yes_col_start"] + 1, box["no_col_start"] + 1
@@ -233,7 +235,7 @@ def test_wheel_scrolls_the_item_list_and_clamps_at_both_ends():
         0, 79, 30, "Delete 20 items? (y/n)", items,
     )
     fake = FakeCommands()
-    fake._mouse_layout = {"confirm_box": box}
+    fake._mouse_state.layout = {"confirm_box": box}
     fake._confirm_dialog = {
         "prompt": "x", "hovered": None, "items": items, "scroll": 0,
     }
@@ -254,7 +256,7 @@ def test_wheel_is_a_no_op_when_the_whole_list_already_fits():
         0, 79, 30, "Delete 2 items? (y/n)", items,
     )
     fake = FakeCommands()
-    fake._mouse_layout = {"confirm_box": box}
+    fake._mouse_state.layout = {"confirm_box": box}
     fake._confirm_dialog = {
         "prompt": "x", "hovered": None, "items": items, "scroll": 0,
     }
@@ -268,7 +270,7 @@ def test_wheel_without_items_never_touches_scroll():
     stray wheel event over it must stay a no-op instead of crashing on
     the list bookkeeping that isn't there."""
     fake = FakeCommands()
-    fake._mouse_layout = {"confirm_box": {
+    fake._mouse_state.layout = {"confirm_box": {
         "buttons_row_offset": 2, "yes_col_start": 5, "yes_col_end": 11,
         "no_col_start": 15, "no_col_end": 20,
     }}

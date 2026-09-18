@@ -16,6 +16,24 @@ import venv_detect
 RUN_OUTPUT_LINE_LIMIT = 10000
 
 
+class RunPanelState:
+    """`:run`/`:lint`/`:cmd`'s shared output-panel state, grouped into
+    one object instead of loose `self.run_*` attributes on TextEditor -
+    see RunPanelMixin below, its only reader/writer."""
+
+    def __init__(self):
+        self.process = None
+        self.master_fd = None
+        self.output_lines = []
+        self.pending_text = ""
+        self.focused = False
+        # None = pinned to the live tail (follows new output, like
+        # `tail -f`); otherwise the absolute line index the user
+        # scrolled to, which stays put as more output arrives below it.
+        self.view_start = None
+        self.rows = 0
+
+
 def _reset_child_signals():
     # Mini ignores SIGINT/SIGQUIT for itself so Ctrl+C can't kill the
     # editor; that disposition is otherwise inherited across fork+exec,
@@ -50,10 +68,10 @@ class RunPanelMixin:
             return python_path
         start_directory = (
             os.path.dirname(os.path.abspath(self.file_name))
-            if self.file_name else self.worktree_root
+            if self.file_name else self.worktree.root
         )
         python_path = venv_detect._find_project_venv_python(
-            start_directory, self.worktree_root
+            start_directory, self.worktree.root
         )
         return python_path or sys.executable
 
@@ -93,8 +111,12 @@ class RunPanelMixin:
         skips the current-file save (and the prompt for a name if it
         has none) for `:cmd`, which need not be about this file at
         all."""
-        if self.run_process is not None and self.run_process.poll() is None:
-            self.run_focused = True
+        already_running = (
+            self.run_panel.process is not None
+            and self.run_panel.process.poll() is None
+        )
+        if already_running:
+            self.run_panel.focused = True
             self.status = "A run is already in progress"
             return
         if save_first and (self.modified or self.file_name is None):
@@ -122,12 +144,12 @@ class RunPanelMixin:
             self.status = f"Could not run: {error}"
             return
         os.close(slave_fd)
-        self.run_process = process
-        self.run_master_fd = master_fd
-        self.run_output_lines = [f"$ {label}"]
-        self.run_pending_text = ""
-        self.run_focused = True
-        self.run_view_start = None
+        self.run_panel.process = process
+        self.run_panel.master_fd = master_fd
+        self.run_panel.output_lines = [f"$ {label}"]
+        self.run_panel.pending_text = ""
+        self.run_panel.focused = True
+        self.run_panel.view_start = None
         terminal.set_run_output_fd(master_fd)
 
     def _require_python_file(self, action_label):
@@ -191,7 +213,7 @@ class RunPanelMixin:
             return
         cwd = (
             os.path.dirname(os.path.abspath(self.file_name))
-            if self.file_name else self.worktree_root
+            if self.file_name else self.worktree.root
         )
         python_path = self._resolve_python_executable()
         self._start_process(
@@ -202,50 +224,54 @@ class RunPanelMixin:
 
     def _pump_run_output(self):
         try:
-            data = os.read(self.run_master_fd, 4096)
+            data = os.read(self.run_panel.master_fd, 4096)
         except OSError:
             data = b""
         if not data:
             self._finish_run()
             return
-        text = self.run_pending_text + _sanitize_run_output(
+        text = self.run_panel.pending_text + _sanitize_run_output(
             data.decode("utf-8", errors="replace")
         )
-        *complete_lines, self.run_pending_text = text.split("\n")
-        self.run_output_lines.extend(complete_lines)
-        overflow = len(self.run_output_lines) - RUN_OUTPUT_LINE_LIMIT
+        *complete_lines, self.run_panel.pending_text = text.split("\n")
+        self.run_panel.output_lines.extend(complete_lines)
+        overflow = len(self.run_panel.output_lines) - RUN_OUTPUT_LINE_LIMIT
         if overflow > 0:
-            self.run_output_lines = self.run_output_lines[overflow:]
+            self.run_panel.output_lines = (
+                self.run_panel.output_lines[overflow:]
+            )
             # Lines are being dropped from the front, so a scrolled-up
             # (non-pinned) view has to shift back by the same amount
             # to keep pointing at the same content instead of quietly
             # drifting to the wrong lines.
-            if self.run_view_start is not None:
-                self.run_view_start = max(0, self.run_view_start - overflow)
+            if self.run_panel.view_start is not None:
+                self.run_panel.view_start = max(
+                    0, self.run_panel.view_start - overflow
+                )
 
     def _finish_run(self):
         exit_code = None
-        if self.run_process is not None:
-            exit_code = self.run_process.poll()
+        if self.run_panel.process is not None:
+            exit_code = self.run_panel.process.poll()
             if exit_code is None:
-                self.run_process.wait()
-                exit_code = self.run_process.returncode
-        if self.run_master_fd is not None:
+                self.run_panel.process.wait()
+                exit_code = self.run_panel.process.returncode
+        if self.run_panel.master_fd is not None:
             try:
-                os.close(self.run_master_fd)
+                os.close(self.run_panel.master_fd)
             except OSError:
                 pass
         terminal.set_run_output_fd(None)
-        self.run_process = None
-        self.run_master_fd = None
-        if self.run_pending_text:
-            self.run_output_lines.append(self.run_pending_text)
-            self.run_pending_text = ""
-        self.run_output_lines.append("")
-        self.run_output_lines.append(
+        self.run_panel.process = None
+        self.run_panel.master_fd = None
+        if self.run_panel.pending_text:
+            self.run_panel.output_lines.append(self.run_panel.pending_text)
+            self.run_panel.pending_text = ""
+        self.run_panel.output_lines.append("")
+        self.run_panel.output_lines.append(
             f"[Process finished with exit code {exit_code}]"
         )
-        self.run_output_lines.append("(Press Esc to close)")
+        self.run_panel.output_lines.append("(Press Esc to close)")
 
     def _scroll_run_output(self, key):
         """Moves the output panel's view. UP/DOWN by one line,
@@ -253,28 +279,36 @@ class RunPanelMixin:
         the live tail; scrolling back down to the bottom re-pins it,
         so new output resumes auto-following (`tail -f`-style) rather
         than requiring a DOWN per line forever to catch back up."""
-        run_display_lines = self.run_output_lines
-        if self.run_pending_text:
-            run_display_lines = run_display_lines + [self.run_pending_text]
-        max_start = max(0, len(run_display_lines) - self._run_rows)
+        run_display_lines = self.run_panel.output_lines
+        if self.run_panel.pending_text:
+            run_display_lines = (
+                run_display_lines + [self.run_panel.pending_text]
+            )
+        max_start = max(0, len(run_display_lines) - self.run_panel.rows)
         current_start = (
-            max_start if self.run_view_start is None
-            else min(self.run_view_start, max_start)
+            max_start if self.run_panel.view_start is None
+            else min(self.run_panel.view_start, max_start)
         )
-        step = self._run_rows if key in ("CTRL-UP", "CTRL-DOWN") else 1
+        step = self.run_panel.rows if key in ("CTRL-UP", "CTRL-DOWN") else 1
         if key in ("UP", "CTRL-UP"):
-            self.run_view_start = max(0, current_start - step)
+            self.run_panel.view_start = max(0, current_start - step)
         else:
             new_start = min(current_start + step, max_start)
-            self.run_view_start = None if new_start >= max_start else new_start
+            self.run_panel.view_start = (
+                None if new_start >= max_start else new_start
+            )
 
     def _stop_run(self):
-        if self.run_process is not None and self.run_process.poll() is None:
-            self.run_focused = False
+        still_running = (
+            self.run_panel.process is not None
+            and self.run_panel.process.poll() is None
+        )
+        if still_running:
+            self.run_panel.focused = False
             return
-        if self.run_process is not None:
+        if self.run_panel.process is not None:
             self._finish_run()
-        self.run_output_lines = []
-        self.run_pending_text = ""
-        self.run_focused = False
-        self.run_view_start = None
+        self.run_panel.output_lines = []
+        self.run_panel.pending_text = ""
+        self.run_panel.focused = False
+        self.run_panel.view_start = None

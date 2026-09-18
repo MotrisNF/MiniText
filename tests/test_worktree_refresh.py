@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
 ))
 from commands import CommandMixin  # noqa: E402
-from worktree import WorktreePanelMixin  # noqa: E402
+from worktree import WorktreePanelMixin, WorktreeState  # noqa: E402
 
 
 class FakeEditor(CommandMixin, WorktreePanelMixin):
@@ -20,9 +20,8 @@ class FakeEditor(CommandMixin, WorktreePanelMixin):
         self.file_name = None
         self.modified = False
         self._worktree_entries_cache = "stale"
-        self.worktree_root = worktree_root
-        self.worktree_show_hidden = True
-        self.worktree_expanded = set()
+        self.worktree = WorktreeState(worktree_root)
+        self.worktree.show_hidden = True
 
     def _render(self):
         pass

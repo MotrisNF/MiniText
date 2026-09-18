@@ -413,10 +413,14 @@ function/method definition's own parameter names, string literals
   than not; quote-matching leaves it alone as that one block too,
   rather than pairing up two of its own three-quote delimiters (or
   splitting its coloring apart) depending on which quote the cursor
-  happens to land on.
+  happens to land on. This is tracked across lines: a docstring
+  spanning several of them is colored as one block from its opening
+  delimiter to its closing one, not just the piece that happens to
+  start and end on the same line.
 
 C/C++ files get the same treatment with their own vocabulary - see
-[C/C++](#cc) above for what's shared with autocompletion there.
+[C/C++](#cc) above for what's shared with autocompletion there. A
+`/* ... */` comment spanning multiple lines is tracked the same way.
 
 Every color is configurable per-theme - see
 [Configuration](#configuration).
@@ -912,11 +916,6 @@ Mini is intentionally small. Some notable limitations:
   import or class in a session can be noticeably slower than a plain
   buffer-word match (parsing/caching a large module or a cold
   environment probe); Mini itself doesn't cap this.
-- Syntax highlighting colors each line independently, without
-  awareness of multi-line constructs: a triple-quoted Python string,
-  or a C/C++ `/* ... */` comment, spanning several lines won't be
-  colored (or, for the comment, excluded from highlighting) as one
-  block. Bracket/quote matching itself does search across lines.
 - Undo/redo is granular: each keystroke that changes the text is its
   own undo step.
 - Search is a plain, case-insensitive substring match; there is no

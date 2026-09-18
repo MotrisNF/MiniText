@@ -8,20 +8,16 @@ import tempfile
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
 ))
-from worktree import WorktreePanelMixin  # noqa: E402
+from mouse import MouseState  # noqa: E402
+from worktree import WorktreePanelMixin, WorktreeState  # noqa: E402
 
 
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
-        self.worktree_root = root
-        self.worktree_root_collapsed = False
-        self.worktree_show_hidden = True
-        self.worktree_expanded = set()
-        self.worktree_cursor = 0
-        self.worktree_scroll = 0
-        self.worktree_selected_entries = set()
+        self.worktree = WorktreeState(root)
+        self.worktree.show_hidden = True
         self._worktree_entries_cache = None
-        self._worktree_drag_origin = None
+        self._mouse_state = MouseState()
         self.status = ""
         self.file_name = None
         self.confirm_calls = []
@@ -46,7 +42,7 @@ def test_drop_on_directory_moves_inside_it():
         a_path = os.path.join(tmp, "a.txt")
         open(a_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._worktree_drag_origin = a_path
+        fake._mouse_state.drag_origin = a_path
         fake._handle_worktree_drop(fake._row_for("sub"))
         assert fake.confirm_calls == ["Move a.txt to 'sub'? (y/n)"]
         assert os.path.exists(os.path.join(tmp, "sub", "a.txt"))
@@ -60,8 +56,8 @@ def test_drop_on_a_file_moves_to_its_parent_directory():
         open(c_path, "w", encoding="utf-8").close()
         open(os.path.join(tmp, "b.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_expanded = {os.path.join(tmp, "sub")}
-        fake._worktree_drag_origin = c_path
+        fake.worktree.expanded = {os.path.join(tmp, "sub")}
+        fake._mouse_state.drag_origin = c_path
         fake._handle_worktree_drop(fake._row_for("b.txt"))
         assert os.path.exists(os.path.join(tmp, "c.txt"))
         assert not os.path.exists(c_path)
@@ -72,7 +68,7 @@ def test_dropping_an_entry_on_itself_is_a_silent_no_op():
         b_path = os.path.join(tmp, "b.txt")
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._worktree_drag_origin = b_path
+        fake._mouse_state.drag_origin = b_path
         fake._handle_worktree_drop(fake._row_for("b.txt"))
         assert fake.confirm_calls == []
         assert os.path.exists(b_path)
@@ -86,12 +82,12 @@ def test_dropping_a_multiselection_moves_every_selected_entry():
         open(a_path, "w", encoding="utf-8").close()
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_selected_entries = {a_path, b_path}
-        fake._worktree_drag_origin = a_path  # dragged from within the set
+        fake.worktree.selected_entries = {a_path, b_path}
+        fake._mouse_state.drag_origin = a_path  # dragged from within the set
         fake._handle_worktree_drop(fake._row_for("sub"))
         assert os.path.exists(os.path.join(tmp, "sub", "a.txt"))
         assert os.path.exists(os.path.join(tmp, "sub", "b.txt"))
-        assert fake.worktree_selected_entries == set()
+        assert fake.worktree.selected_entries == set()
 
 
 def test_dropping_a_multiselection_sends_names_as_a_list():
@@ -106,8 +102,8 @@ def test_dropping_a_multiselection_sends_names_as_a_list():
         open(a_path, "w", encoding="utf-8").close()
         open(b_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_selected_entries = {a_path, b_path}
-        fake._worktree_drag_origin = a_path
+        fake.worktree.selected_entries = {a_path, b_path}
+        fake._mouse_state.drag_origin = a_path
         fake._handle_worktree_drop(fake._row_for("sub"))
         assert fake.confirm_calls == ["Move 2 items to 'sub'? (y/n)"]
         assert fake.confirm_items == [["a.txt", "b.txt"]]
@@ -124,13 +120,14 @@ def test_dragging_over_a_target_sets_status_and_drag_target():
         a_path = os.path.join(tmp, "a.txt")
         open(a_path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake._worktree_drag_origin = a_path
+        fake._mouse_state.drag_origin = a_path
         fake._update_worktree_drag_status(fake._row_for("sub"))
         assert "a.txt" in fake.status
         assert "sub" in fake.status
-        assert fake._worktree_drag_target == os.path.join(tmp, "sub")
+        assert fake._mouse_state.drag_target == os.path.join(tmp, "sub")
         fake._update_worktree_drag_status(fake._row_for("a.txt"))
-        assert fake._worktree_drag_target is None  # hovering the origin itself
+        # hovering the origin itself
+        assert fake._mouse_state.drag_target is None
 
 
 TESTS = [

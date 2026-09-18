@@ -17,16 +17,19 @@ _INCLUDE_PATTERN = re.compile(r'^\s*#\s*include\s+([<"])')
 _INCLUDE_LINE_PATTERN = re.compile(r'^\s*#\s*include\s+([<"])([^>"]+)[>"]')
 
 
-def _is_inside_c_string_or_comment(line, column):
+def _is_inside_c_string_or_comment(line, column, entry_covers_up_to=0):
     """Like autocomplete.py's own `_is_inside_string_or_comment`, for
     C/C++'s comment styles instead of Python's `#`: `//` runs to the
     end of the line; a same-line `/* ... */` is skipped over entirely
     (scanning resumes right after it); one that doesn't close by
-    `column` on this line counts as "inside" - same single-line-only
-    limitation as a block comment actually spanning multiple lines,
-    which this can't see across."""
+    `column` on this line counts as "inside", same as one carried over
+    from an earlier line (`entry_covers_up_to`, see rendering.py's
+    `_comment_state_for` - scanning starts from there instead of
+    column 0, same reasoning as autocomplete.py's own version)."""
+    if column < entry_covers_up_to:
+        return True
     quote = None
-    index = 0
+    index = entry_covers_up_to
     while index < column and index < len(line):
         character = line[index]
         if quote:

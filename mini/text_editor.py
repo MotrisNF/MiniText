@@ -19,15 +19,15 @@ from editing import (
     BufferEditMixin, STATUS_TIMEOUT_SECONDS, UNDO_HISTORY_LIMIT,
     _indent_unit,
 )
-from mouse import MouseMixin
+from mouse import MouseMixin, MouseState
 from rendering import RenderMixin
-from run_panel import RunPanelMixin
+from run_panel import RunPanelMixin, RunPanelState
 from tabs import TabsMixin
 from terminal import (
     ESC, _disable_resize_wakeup, _enable_resize_wakeup, _handle_resize,
     raw_terminal, read_key,
 )
-from worktree import WorktreePanelMixin
+from worktree import WorktreePanelMixin, WorktreeState
 
 HJKL_TO_ARROW = {"h": "LEFT", "j": "DOWN", "k": "UP", "l": "RIGHT"}
 MOVEMENT_KEYS = {
@@ -63,29 +63,16 @@ class TextEditor(
         self.undo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
         self.redo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
         self.modified = False
-        self.worktree_visible = False
-        self.worktree_focused = False
-        self.worktree_visible_because_of_focus = False
-        self.worktree_root = os.getcwd()
-        self.worktree_root_collapsed = False
-        self.worktree_expanded = set()
-        self.worktree_selected_entries = set()
-        self.worktree_show_hidden = False
-        self.worktree_cursor = 0
-        self.worktree_scroll = 0
-        self.worktree_new_entry_dir = self.worktree_root
+        # Per-buffer multi-line comment/docstring tracking (see
+        # rendering.py's `_comment_state_for`) - travels with the tab
+        # like `lines`/`undo_stack` do (see tabs.py's
+        # BUFFER_ATTRIBUTES), reset whenever an edit invalidates it.
+        self._comment_state = []
+        self._comment_state_language = None
+        self.worktree = WorktreeState(os.getcwd())
         self.tabs = [self._current_buffer_state()]
         self.active_tab = 0
-        self.run_process = None
-        self.run_master_fd = None
-        self.run_output_lines = []
-        self.run_pending_text = ""
-        self.run_focused = False
-        # None = pinned to the live tail (follows new output, like
-        # `tail -f`); otherwise the absolute line index the user
-        # scrolled to, which stays put as more output arrives below it.
-        self.run_view_start = None
-        self._run_rows = 0
+        self.run_panel = RunPanelState()
         # Differential rendering: only the rows whose own text actually
         # changed since the last frame get re-sent to the terminal -
         # everything that isn't part of any row's own content (a
@@ -102,18 +89,8 @@ class TextEditor(
         self._suggestion_dismissed_at = None
         self._suggestion_caches = SuggestionCaches()
         self._elastic_width_cache = {}
-        self._mouse_layout = None
         self._worktree_entries_cache = None
-        self._last_click = None
-        self._hovered_worktree_button = None
-        self._hovered_tab_close = None
-        self._hovered_close_mini = False
-        self._hovered_worktree_delete = None
-        self._hovered_worktree_rename = None
-        self._hovered_worktree_row = None
-        self._worktree_drag_origin = None
-        self._worktree_drag_target = None
-        self._worktree_ctrl_drag_active = False
+        self._mouse_state = MouseState()
         self._name_dialog = None
         self._confirm_dialog = None
 
@@ -158,257 +135,27 @@ class TextEditor(
                         if not self.help_mode:
                             self._handle_mouse_event(key)
                         continue
-                    if key == "\x03" and not self.run_focused:
+                    if key == "\x03" and not self.run_panel.focused:
                         continue
                     if (
-                        key == "\x04" and not self.worktree_focused
+                        key == "\x04" and not self.worktree.focused
                         and self.mode != "visual"
                     ):
                         continue
                     if self.help_mode:
-                        if key == "q":
-                            self.help_mode = False
-                            # _render_help() painted the whole screen
-                            # itself, bypassing the row cache below -
-                            # it's now stale relative to what's
-                            # actually on screen.
-                            self._force_full_redraw = True
-                        elif key in ("UP", "DOWN", "CTRL-UP", "CTRL-DOWN"):
-                            self._scroll_help(key)
-                        continue
-                    if self.run_focused:
-                        if key == "\x03":
-                            if self.run_process is not None:
-                                self.run_process.send_signal(signal.SIGINT)
-                        elif key == ESC:
-                            self._stop_run()
-                        elif key in (
-                            "UP", "DOWN", "CTRL-UP", "CTRL-DOWN"
-                        ):
-                            self._scroll_run_output(key)
-                        elif self.run_master_fd is not None:
-                            if key in ("\r", "\n"):
-                                os.write(self.run_master_fd, b"\n")
-                            elif key in ("\x7f", "\b"):
-                                os.write(self.run_master_fd, b"\x7f")
-                            elif len(key) == 1 and key.isprintable():
-                                os.write(
-                                    self.run_master_fd, key.encode("utf-8")
-                                )
-                        continue
-                    if self.worktree_focused:
-                        entries = self._worktree_entries()
-                        if key in ("UP", "k"):
-                            self.worktree_cursor = max(
-                                0, self.worktree_cursor - 1
-                            )
-                        elif key in ("DOWN", "j"):
-                            self.worktree_cursor = min(
-                                len(entries) - 1, self.worktree_cursor + 1
-                            )
-                        elif key == "l":
-                            self._worktree_expand(entries)
-                        elif key == "h":
-                            self._worktree_collapse(entries)
-                        elif key in ("\r", "\n"):
-                            self._worktree_activate(entries)
-                        elif key == "\x06":
-                            self._worktree_create(is_directory=False)
-                        elif key == "\x04":
-                            self._worktree_create(is_directory=True)
-                        elif key == "\x08":
-                            self.worktree_show_hidden = (
-                                not self.worktree_show_hidden
-                            )
-                            self._invalidate_worktree_cache()
-                        elif key == "DELETE":
-                            self._worktree_delete(entries)
-                        elif key == "r":
-                            self._worktree_rename(entries)
-                        elif key in ("v", ESC):
-                            self._release_worktree_focus()
-                        elif key == ":":
-                            self._release_worktree_focus()
-                            self.mode = "command"
-                            self.command = ""
-                        elif key == "i":
-                            self._release_worktree_focus()
-                            if self._is_blank_buffer():
-                                self.status = "Open or create a file first"
-                            else:
-                                self.mode = "insert"
-                                self._maybe_autosave()
-                        continue
-                    if self.command is not None:
-                        if key in ("\r", "\n"):
-                            self._execute_command()
-                        elif key in ("\x7f", "\b"):
-                            self.command = self.command[:-1]
-                        elif key == ESC:
-                            self.command = None
-                            self.mode = "visual"
-                        elif key == "\t":
-                            self._cmd_tab_complete()
-                        elif len(key) == 1 and key.isprintable():
-                            self.command += key
-                        continue
-                    if self.search_query is not None:
-                        if key in ("\r", "\n"):
-                            self._execute_search()
-                        elif key in ("\x7f", "\b"):
-                            self.search_query = self.search_query[:-1]
-                        elif key == ESC:
-                            self.search_query = None
-                            self.mode = "visual"
-                        elif len(key) == 1 and key.isprintable():
-                            self.search_query += key
-                        continue
-                    if self.move_mode:
-                        if key in ("j", "DOWN"):
-                            self._move_current_line_or_selection(1)
-                        elif key in ("k", "UP"):
-                            self._move_current_line_or_selection(-1)
-                        elif key in ("m", ESC):
-                            self.move_mode = False
-                        continue
-
-                    if self.mode == "visual" and key in HJKL_TO_ARROW:
-                        key = HJKL_TO_ARROW[key]
-                    if self.mode == "visual" and key.isdigit():
-                        if self.count_locked:
-                            self.pending_count = key
-                            self.count_locked = False
-                        else:
-                            self.pending_count += key
-                        continue
-                    if self.mode == "visual" and key not in MOVEMENT_KEYS:
-                        self.pending_count = ""
-                        self.count_locked = False
-
-                    dropdown_open = (
-                        self.mode == "insert"
-                        and len(self.suggestion_matches) >= 2
-                    )
-                    if dropdown_open and key == "UP":
-                        self.suggestion_index = (
-                            self.suggestion_index - 1
-                        ) % len(self.suggestion_matches)
-                    elif dropdown_open and key == "DOWN":
-                        self.suggestion_index = (
-                            self.suggestion_index + 1
-                        ) % len(self.suggestion_matches)
-                    elif dropdown_open and key == "\t":
-                        self._accept_highlighted_suggestion()
-                    elif dropdown_open and key == ESC:
-                        self.suggestion_matches = []
-                        self._suggestion_dismissed_at = (
-                            self.line, self.column
-                        )
-                    elif key == ESC:
-                        was_insert = self.mode == "insert"
-                        self.mode = "visual"
-                        self.command = None
-                        self.selection_anchor = None
-                        if was_insert:
-                            self._maybe_autosave()
-                    elif self.mode == "visual" and key == ":":
-                        self.mode = "command"
-                        self.command = ""
-                    elif self.mode == "visual" and key == "/":
-                        self.mode = "search"
-                        self.search_query = ""
-                    elif self.mode == "visual" and key == "m":
-                        self.move_mode = True
-                    elif self.mode == "visual" and key == "w":
-                        if not self.worktree_visible:
-                            self.worktree_visible = True
-                            self.worktree_visible_because_of_focus = True
-                        self.worktree_focused = True
-                        self._invalidate_worktree_cache()
-                    elif (
-                        self.mode == "visual"
-                        and key == "\t"
-                        and len(self.tabs) > 1
-                    ):
-                        self._switch_to_tab(
-                            (self.active_tab + 1) % len(self.tabs)
-                        )
-                    elif (
-                        self.mode == "visual"
-                        and key == "SHIFT-TAB"
-                        and len(self.tabs) > 1
-                    ):
-                        self._switch_to_tab(
-                            (self.active_tab - 1) % len(self.tabs)
-                        )
-                    elif self.mode == "visual" and key == "i":
-                        if self._is_blank_buffer():
-                            self.status = "Open or create a file first"
-                        else:
-                            self.mode = "insert"
-                            self.selection_anchor = None
-                            self._maybe_autosave()
-                    elif (
-                        self.mode == "visual"
-                        and key == "n"
-                        and self.last_search
-                    ):
-                        self._find_next(self.last_search, from_current=False)
-                    elif key == "\x1a":
-                        self._undo()
-                    elif key == "\x19":
-                        self._redo()
-                    elif key in ("UP", "CTRL-UP"):
-                        self._update_selection(key)
-                        self._move_vertical(-self._consume_count())
-                    elif key in ("DOWN", "CTRL-DOWN"):
-                        self._update_selection(key)
-                        self._move_vertical(self._consume_count())
-                    elif key in ("LEFT", "CTRL-LEFT"):
-                        self._update_selection(key)
-                        self._move_horizontal(-self._consume_count())
-                    elif key in ("RIGHT", "CTRL-RIGHT"):
-                        self._update_selection(key)
-                        self._move_horizontal(self._consume_count())
-                    elif self.mode == "visual" and key in ("a", "\x01"):
-                        self._update_selection(
-                            "CTRL-A" if key == "\x01" else key
-                        )
-                        self.column = 0
-                    elif self.mode == "visual" and key in ("f", "\x06"):
-                        self._update_selection(
-                            "CTRL-F" if key == "\x06" else key
-                        )
-                        self.column = len(self.lines[self.line])
-                    elif self.mode == "visual" and key in ("s", "\x13"):
-                        self._update_selection(
-                            "CTRL-S" if key == "\x13" else key
-                        )
-                        self.line = 0
-                        self.column = 0
-                    elif self.mode == "visual" and key in ("d", "\x04"):
-                        self._update_selection(
-                            "CTRL-D" if key == "\x04" else key
-                        )
-                        self.line = len(self.lines) - 1
-                        self.column = 0
-                    elif self.mode == "insert" and key in ("\r", "\n"):
-                        self._new_line()
-                    elif self.mode == "insert" and key in ("\x7f", "\b"):
-                        self._backspace()
-                    elif self.mode == "insert" and key == "DELETE":
-                        self._delete_forward()
-                    elif self.mode == "insert" and key == "\t":
-                        if self.suggestion_matches:
-                            self._accept_highlighted_suggestion()
-                        else:
-                            self._insert(_indent_unit(self.file_name))
-                    elif (
-                        self.mode == "insert"
-                        and len(key) == 1
-                        and key.isprintable()
-                    ):
-                        self._insert(key)
+                        self._handle_help_mode_key(key)
+                    elif self.run_panel.focused:
+                        self._handle_run_panel_key(key)
+                    elif self.worktree.focused:
+                        self._handle_worktree_key(key)
+                    elif self.command is not None:
+                        self._handle_command_mode_key(key)
+                    elif self.search_query is not None:
+                        self._handle_search_mode_key(key)
+                    elif self.move_mode:
+                        self._handle_move_mode_key(key)
+                    else:
+                        self._handle_editing_key(key)
         finally:
             signal.signal(signal.SIGWINCH, previous_handler)
             signal.signal(signal.SIGINT, previous_sigint)
@@ -418,12 +165,227 @@ class TextEditor(
                 terminal.set_update_check_fd(None)
                 os.close(update_check_fd)
 
+    def _handle_help_mode_key(self, key):
+        if key == "q":
+            self.help_mode = False
+            # _render_help() painted the whole screen itself, bypassing
+            # the row cache below - it's now stale relative to what's
+            # actually on screen.
+            self._force_full_redraw = True
+        elif key in ("UP", "DOWN", "CTRL-UP", "CTRL-DOWN"):
+            self._scroll_help(key)
+
+    def _handle_run_panel_key(self, key):
+        if key == "\x03":
+            if self.run_panel.process is not None:
+                self.run_panel.process.send_signal(signal.SIGINT)
+        elif key == ESC:
+            self._stop_run()
+        elif key in ("UP", "DOWN", "CTRL-UP", "CTRL-DOWN"):
+            self._scroll_run_output(key)
+        elif self.run_panel.master_fd is not None:
+            if key in ("\r", "\n"):
+                os.write(self.run_panel.master_fd, b"\n")
+            elif key in ("\x7f", "\b"):
+                os.write(self.run_panel.master_fd, b"\x7f")
+            elif len(key) == 1 and key.isprintable():
+                os.write(self.run_panel.master_fd, key.encode("utf-8"))
+
+    def _handle_worktree_key(self, key):
+        entries = self._worktree_entries()
+        if key in ("UP", "k"):
+            self.worktree.cursor = max(0, self.worktree.cursor - 1)
+        elif key in ("DOWN", "j"):
+            self.worktree.cursor = min(
+                len(entries) - 1, self.worktree.cursor + 1
+            )
+        elif key == "l":
+            self._worktree_expand(entries)
+        elif key == "h":
+            self._worktree_collapse(entries)
+        elif key in ("\r", "\n"):
+            self._worktree_activate(entries)
+        elif key == "\x06":
+            self._worktree_create(is_directory=False)
+        elif key == "\x04":
+            self._worktree_create(is_directory=True)
+        elif key == "\x08":
+            self.worktree.show_hidden = not self.worktree.show_hidden
+            self._invalidate_worktree_cache()
+        elif key == "DELETE":
+            self._worktree_delete(entries)
+        elif key == "r":
+            self._worktree_rename(entries)
+        elif key in ("v", ESC):
+            self._release_worktree_focus()
+        elif key == ":":
+            self._release_worktree_focus()
+            self.mode = "command"
+            self.command = ""
+        elif key == "i":
+            self._release_worktree_focus()
+            if self._is_blank_buffer():
+                self.status = "Open or create a file first"
+            else:
+                self.mode = "insert"
+                self._maybe_autosave()
+
+    def _handle_command_mode_key(self, key):
+        if key in ("\r", "\n"):
+            self._execute_command()
+        elif key in ("\x7f", "\b"):
+            self.command = self.command[:-1]
+        elif key == ESC:
+            self.command = None
+            self.mode = "visual"
+        elif key == "\t":
+            self._cmd_tab_complete()
+        elif len(key) == 1 and key.isprintable():
+            self.command += key
+
+    def _handle_search_mode_key(self, key):
+        if key in ("\r", "\n"):
+            self._execute_search()
+        elif key in ("\x7f", "\b"):
+            self.search_query = self.search_query[:-1]
+        elif key == ESC:
+            self.search_query = None
+            self.mode = "visual"
+        elif len(key) == 1 and key.isprintable():
+            self.search_query += key
+
+    def _handle_move_mode_key(self, key):
+        if key in ("j", "DOWN"):
+            self._move_current_line_or_selection(1)
+        elif key in ("k", "UP"):
+            self._move_current_line_or_selection(-1)
+        elif key in ("m", ESC):
+            self.move_mode = False
+
+    def _handle_editing_key(self, key):
+        if self.mode == "visual" and key in HJKL_TO_ARROW:
+            key = HJKL_TO_ARROW[key]
+        if self.mode == "visual" and key.isdigit():
+            if self.count_locked:
+                self.pending_count = key
+                self.count_locked = False
+            else:
+                self.pending_count += key
+            return
+        if self.mode == "visual" and key not in MOVEMENT_KEYS:
+            self.pending_count = ""
+            self.count_locked = False
+
+        dropdown_open = (
+            self.mode == "insert" and len(self.suggestion_matches) >= 2
+        )
+        if dropdown_open and key == "UP":
+            self.suggestion_index = (
+                self.suggestion_index - 1
+            ) % len(self.suggestion_matches)
+        elif dropdown_open and key == "DOWN":
+            self.suggestion_index = (
+                self.suggestion_index + 1
+            ) % len(self.suggestion_matches)
+        elif dropdown_open and key == "\t":
+            self._accept_highlighted_suggestion()
+        elif dropdown_open and key == ESC:
+            self.suggestion_matches = []
+            self._suggestion_dismissed_at = (self.line, self.column)
+        elif key == ESC:
+            was_insert = self.mode == "insert"
+            self.mode = "visual"
+            self.command = None
+            self.selection_anchor = None
+            if was_insert:
+                self._maybe_autosave()
+        elif self.mode == "visual" and key == ":":
+            self.mode = "command"
+            self.command = ""
+        elif self.mode == "visual" and key == "/":
+            self.mode = "search"
+            self.search_query = ""
+        elif self.mode == "visual" and key == "m":
+            self.move_mode = True
+        elif self.mode == "visual" and key == "w":
+            if not self.worktree.visible:
+                self.worktree.visible = True
+                self.worktree.visible_because_of_focus = True
+            self.worktree.focused = True
+            self._invalidate_worktree_cache()
+        elif (
+            self.mode == "visual" and key == "\t" and len(self.tabs) > 1
+        ):
+            self._switch_to_tab((self.active_tab + 1) % len(self.tabs))
+        elif (
+            self.mode == "visual"
+            and key == "SHIFT-TAB"
+            and len(self.tabs) > 1
+        ):
+            self._switch_to_tab((self.active_tab - 1) % len(self.tabs))
+        elif self.mode == "visual" and key == "i":
+            if self._is_blank_buffer():
+                self.status = "Open or create a file first"
+            else:
+                self.mode = "insert"
+                self.selection_anchor = None
+                self._maybe_autosave()
+        elif (
+            self.mode == "visual" and key == "n" and self.last_search
+        ):
+            self._find_next(self.last_search, from_current=False)
+        elif key == "\x1a":
+            self._undo()
+        elif key == "\x19":
+            self._redo()
+        elif key in ("UP", "CTRL-UP"):
+            self._update_selection(key)
+            self._move_vertical(-self._consume_count())
+        elif key in ("DOWN", "CTRL-DOWN"):
+            self._update_selection(key)
+            self._move_vertical(self._consume_count())
+        elif key in ("LEFT", "CTRL-LEFT"):
+            self._update_selection(key)
+            self._move_horizontal(-self._consume_count())
+        elif key in ("RIGHT", "CTRL-RIGHT"):
+            self._update_selection(key)
+            self._move_horizontal(self._consume_count())
+        elif self.mode == "visual" and key in ("a", "\x01"):
+            self._update_selection("CTRL-A" if key == "\x01" else key)
+            self.column = 0
+        elif self.mode == "visual" and key in ("f", "\x06"):
+            self._update_selection("CTRL-F" if key == "\x06" else key)
+            self.column = len(self.lines[self.line])
+        elif self.mode == "visual" and key in ("s", "\x13"):
+            self._update_selection("CTRL-S" if key == "\x13" else key)
+            self.line = 0
+            self.column = 0
+        elif self.mode == "visual" and key in ("d", "\x04"):
+            self._update_selection("CTRL-D" if key == "\x04" else key)
+            self.line = len(self.lines) - 1
+            self.column = 0
+        elif self.mode == "insert" and key in ("\r", "\n"):
+            self._new_line()
+        elif self.mode == "insert" and key in ("\x7f", "\b"):
+            self._backspace()
+        elif self.mode == "insert" and key == "DELETE":
+            self._delete_forward()
+        elif self.mode == "insert" and key == "\t":
+            if self.suggestion_matches:
+                self._accept_highlighted_suggestion()
+            else:
+                self._insert(_indent_unit(self.file_name))
+        elif (
+            self.mode == "insert" and len(key) == 1 and key.isprintable()
+        ):
+            self._insert(key)
+
 
 def edit_file(file_name=None, worktree_root=None):
     editor = TextEditor(file_name)
     if worktree_root is not None:
-        editor.worktree_root = os.path.abspath(worktree_root)
-        editor.worktree_new_entry_dir = editor.worktree_root
-        editor.worktree_visible = True
-        editor.worktree_focused = True
+        editor.worktree.root = os.path.abspath(worktree_root)
+        editor.worktree.new_entry_dir = editor.worktree.root
+        editor.worktree.visible = True
+        editor.worktree.focused = True
     editor.run()

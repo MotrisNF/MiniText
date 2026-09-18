@@ -15,6 +15,7 @@ class TabsMixin:
     BUFFER_ATTRIBUTES = (
         "file_name", "lines", "line", "column", "selection_anchor",
         "viewport_top", "undo_stack", "redo_stack", "modified",
+        "_comment_state", "_comment_state_language",
     )
 
     def _current_buffer_state(self):
@@ -34,6 +35,7 @@ class TabsMixin:
             "selection_anchor": None, "viewport_top": 0,
             "undo_stack": deque(maxlen=UNDO_HISTORY_LIMIT),
             "redo_stack": deque(maxlen=UNDO_HISTORY_LIMIT), "modified": False,
+            "_comment_state": [], "_comment_state_language": None,
         }
 
     def _is_blank_buffer(self):
@@ -159,6 +161,8 @@ class TabsMixin:
         self.redo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
         self.modified = False
         self.viewport_top = 0
+        self._comment_state = []
+        self._comment_state_language = None
         self.status = f"Opened {path}"
 
     def _find_tab_for_path(self, path):

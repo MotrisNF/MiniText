@@ -1,8 +1,16 @@
 """Syntax highlighting for Python and C/C++: colors one line's tokens
 (keywords, dunders/preprocessor directives, builtin type names,
-function calls/definitions, strings) independently - no awareness of
-multi-line constructs (a triple-quoted Python string, or a C `/* */`
-comment, spanning several lines won't be colored as one block)."""
+function calls/definitions, strings) at a time. A multi-line construct
+(a triple-quoted Python string, or a C `/* */` comment, spanning
+several lines) is colored as one block too, but only with help from
+outside this module: `_python_line_exit_state`/`_c_line_exit_state`
+below are pure, single-line functions with no memory of their own - a
+per-buffer cache of what's still open *entering* each line
+(rendering.py's `_comment_state_for`) is what actually threads that
+state from one line to the next, and `carryover` (accepted by
+`_highlight_python`/`_highlight_c` below) is how the render pipeline
+tells them how much of what they're about to color starts out already
+inside a still-open construct."""
 
 import keyword
 import re
@@ -30,6 +38,85 @@ _TOKEN_PATTERN = re.compile(
     r"|#.*"
     r"|[A-Za-z_][A-Za-z0-9_]*"
 )
+
+
+_PY_LINE_SCAN_PATTERN = re.compile(
+    _TRIPLE_QUOTE_SOURCE  # closes on this line - resolved, skip over it
+    + r'|"""|\'\'\''  # doesn't close - carries over into the next line
+    r"|'(?:[^'\\]|\\.)*'"
+    r'|"(?:[^"\\]|\\.)*"'
+    r"|#.*"
+)
+
+
+def _python_line_exit_state(line, entry_state):
+    """(exit_state, close_column, open_column) for `line`, given
+    `entry_state` - whatever multi-line construct (None,
+    "python_triple_double", or "python_triple_single") was already
+    open *entering* it. A pure, single-line function - the per-buffer
+    cache that threads exit_state from one line into the next line's
+    own entry_state lives in rendering.py's `_comment_state_for`
+    instead.
+
+    `close_column` is only meaningful when `entry_state` isn't None:
+    the raw column right after the carried-over construct's own
+    closing delimiter on this line - or `len(line)` if it doesn't
+    close here at all, in which case `exit_state` equals `entry_state`
+    unchanged (the whole line stays inside it, and `open_column` is
+    irrelevant). `open_column` is only meaningful when `exit_state` is
+    not None *and* different from `entry_state`: the raw column where
+    a brand new construct opens on this line without closing - the
+    opening line's own delimiter needs this too (see rendering.py's
+    `_apply_highlight`), not just the lines after it."""
+    close_column = 0
+    index = 0
+    if entry_state is not None:
+        closer = '"""' if entry_state == "python_triple_double" else "'''"
+        found = line.find(closer)
+        if found == -1:
+            return entry_state, len(line), None
+        close_column = found + len(closer)
+        index = close_column
+    for match in _PY_LINE_SCAN_PATTERN.finditer(line, index):
+        token = match.group()
+        if token.startswith("#"):
+            return None, close_column, None
+        if token == '"""':
+            return "python_triple_double", close_column, match.start()
+        if token == "'''":
+            return "python_triple_single", close_column, match.start()
+    return None, close_column, None
+
+
+_C_LINE_SCAN_PATTERN = re.compile(
+    r"/\*.*?\*/"  # closes on this line - resolved, skip over it
+    r"|/\*"  # doesn't close - carries over into the next line
+    r"|//.*"
+    r"|'(?:[^'\\]|\\.)*'"
+    r'|"(?:[^"\\]|\\.)*"'
+)
+
+
+def _c_line_exit_state(line, entry_state):
+    """Same idea as `_python_line_exit_state`, for C/C++'s `/* */`
+    block comments - the only multi-line construct either language
+    has (a `//` line comment always ends at EOL, same as Python's
+    `#`)."""
+    close_column = 0
+    index = 0
+    if entry_state is not None:
+        found = line.find("*/")
+        if found == -1:
+            return entry_state, len(line), None
+        close_column = found + 2
+        index = close_column
+    for match in _C_LINE_SCAN_PATTERN.finditer(line, index):
+        token = match.group()
+        if token == "/*":
+            return "c_block_comment", close_column, match.start()
+        if token.startswith("//"):
+            return None, close_column, None
+    return None, close_column, None
 
 
 def is_in_triple_quoted_string(line, column):
@@ -109,12 +196,45 @@ def _def_param_role(display_text, token_start):
     return "name"
 
 
-def _highlight_python(display_text, lookahead=""):
+def _highlight_python(
+    display_text, lookahead="", carryover=0, tail_carryover=0,
+):
     """`lookahead` is whatever real text follows `display_text` in the
     actual line but isn't part of it - e.g. bracket-match rendering
     splits a line right before a paren, so the piece ending in a
     function name would otherwise never see the "(" that names it as
-    a call, right when it matters most (cursor on that bracket)."""
+    a call, right when it matters most (cursor on that bracket).
+
+    `carryover` (display-text characters, from `display_text`'s own
+    start) is how many of them are already known to be inside a
+    multi-line construct carried over from an earlier line (see this
+    module's own docstring) - colored as a comment outright, with
+    normal tokenizing resuming only after it. `tail_carryover` is the
+    mirror image, counted from `display_text`'s own end: a brand new
+    construct that opens somewhere in this same piece and doesn't
+    close - needed for the *opening* line's own delimiter, which
+    `_TOKEN_PATTERN` alone can't recognize as "the start of one" (it
+    only ever matches a triple-quote that both opens *and* closes
+    within the same text)."""
+    if carryover > 0 or tail_carryover > 0:
+        carryover = min(carryover, len(display_text))
+        tail_carryover = min(tail_carryover, len(display_text) - carryover)
+        split = len(display_text) - tail_carryover
+        prefix, middle, suffix = (
+            display_text[:carryover], display_text[carryover:split],
+            display_text[split:],
+        )
+        colored_prefix = (
+            f"{theme.COMMENT_COLOR}{prefix}{theme.COLOR_RESET}"
+            if prefix else ""
+        )
+        colored_suffix = (
+            f"{theme.COMMENT_COLOR}{suffix}{theme.COLOR_RESET}"
+            if suffix else ""
+        )
+        middle_colored = _highlight_python(middle, lookahead) if middle else ""
+        return colored_prefix + middle_colored + colored_suffix
+
     def _colorize(match):
         token = match.group()
         if token.startswith('"""') or token.startswith("'''"):
@@ -159,11 +279,36 @@ _C_TOKEN_PATTERN = re.compile(
 )
 
 
-def _highlight_c(display_text, lookahead="", cpp=False):
+def _highlight_c(
+    display_text, lookahead="", cpp=False, carryover=0, tail_carryover=0,
+):
     """Same idea as `_highlight_python`, for C (or C++, with
     `cpp=True` for its extra keywords/types) - a `//` or same-line
     `/* */` comment matches as one token so nothing inside it gets
-    highlighted as code, the same way Python's `#.*` does."""
+    highlighted as code, the same way Python's `#.*` does. `carryover`/
+    `tail_carryover` are the same prefix/suffix `_highlight_python`
+    accepts."""
+    if carryover > 0 or tail_carryover > 0:
+        carryover = min(carryover, len(display_text))
+        tail_carryover = min(tail_carryover, len(display_text) - carryover)
+        split = len(display_text) - tail_carryover
+        prefix, middle, suffix = (
+            display_text[:carryover], display_text[carryover:split],
+            display_text[split:],
+        )
+        colored_prefix = (
+            f"{theme.COMMENT_COLOR}{prefix}{theme.COLOR_RESET}"
+            if prefix else ""
+        )
+        colored_suffix = (
+            f"{theme.COMMENT_COLOR}{suffix}{theme.COLOR_RESET}"
+            if suffix else ""
+        )
+        middle_colored = (
+            _highlight_c(middle, lookahead, cpp) if middle else ""
+        )
+        return colored_prefix + middle_colored + colored_suffix
+
     keywords = CPP_KEYWORDS if cpp else C_KEYWORDS
     type_names = CPP_TYPE_NAMES if cpp else C_TYPE_NAMES
     literals = CPP_LITERALS if cpp else ()

@@ -16,10 +16,11 @@ class CommandMixin:
         if self.file_name is None:
             self.status = "Name of the file:"
             self._render()
-            self.file_name = self._read_command_line()
-            if not self.file_name:
+            new_name = self._read_command_line()
+            if not new_name:
                 self.status = "Not saved"
                 return False
+            self.file_name = new_name
             is_new_file = not os.path.exists(self.file_name)
         with open(self.file_name, "w", encoding="utf-8") as file:
             file.write("\n".join(self.lines))
@@ -214,7 +215,7 @@ class CommandMixin:
             column, row = int(column_text), int(row_text)
         except ValueError:
             return None
-        layout = self._mouse_layout
+        layout = self._mouse_state.layout
         box = layout.get("confirm_box") if layout else None
         if box is None:
             return None
@@ -429,12 +430,12 @@ class CommandMixin:
         elif name == "vl" and argument is not None:
             self._paste_before_line(argument)
         elif name == "tree" and argument is None:
-            self.worktree_visible = not self.worktree_visible
-            if self.worktree_visible:
+            self.worktree.visible = not self.worktree.visible
+            if self.worktree.visible:
                 self._invalidate_worktree_cache()
             else:
-                self.worktree_focused = False
-            self.worktree_visible_because_of_focus = False
+                self.worktree.focused = False
+            self.worktree.visible_because_of_focus = False
         elif name in ("run", "terminal") and argument is None:
             self._start_run()
         elif name == "lint" and argument is None:
@@ -479,7 +480,7 @@ class CommandMixin:
     def _cmd_completion_directory(self):
         return (
             os.path.dirname(os.path.abspath(self.file_name))
-            if self.file_name else self.worktree_root
+            if self.file_name else self.worktree.root
         )
 
     def _cmd_tab_complete(self):

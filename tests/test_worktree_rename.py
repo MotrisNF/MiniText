@@ -12,25 +12,22 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mini",
 ))
 import theme  # noqa: E402
-from worktree import WorktreePanelMixin, WORKTREE_WIDTH  # noqa: E402
+from mouse import MouseState  # noqa: E402
+from worktree import (  # noqa: E402
+    WorktreePanelMixin, WorktreeState, WORKTREE_WIDTH,
+)
 
 
 class FakePanel(WorktreePanelMixin):
     def __init__(self, root):
-        self.worktree_root = root
-        self.worktree_root_collapsed = False
-        self.worktree_show_hidden = True
-        self.worktree_expanded = set()
-        self.worktree_cursor = 0
-        self.worktree_scroll = 0
-        self.worktree_selected_entries = set()
-        self.worktree_new_entry_dir = root
+        self.worktree = WorktreeState(root)
+        self.worktree.show_hidden = True
         self._worktree_entries_cache = None
         self.file_name = None
         self.tabs = [{"file_name": None}]
         self.active_tab = 0
         self.status = ""
-        self._hovered_worktree_row = None
+        self._mouse_state = MouseState()
         self._next_name = None
 
     def _prompt_name_dialog(self, label, initial_value=""):
@@ -52,7 +49,7 @@ def test_renaming_a_file_updates_it_on_disk():
         fake = FakePanel(tmp)
         fake._next_name = "b.txt"
         entries = fake._worktree_entries()
-        fake.worktree_cursor = 1  # entries[0] is the root itself
+        fake.worktree.cursor = 1  # entries[0] is the root itself
         fake._worktree_rename(entries)
         assert not os.path.exists(old_path)
         assert os.path.exists(os.path.join(tmp, "b.txt"))
@@ -67,7 +64,7 @@ def test_renaming_the_open_file_updates_file_name():
         fake.file_name = old_path
         fake.tabs = [{"file_name": old_path}]
         fake._next_name = "b.txt"
-        fake.worktree_cursor = 1
+        fake.worktree.cursor = 1
         fake._worktree_rename(fake._worktree_entries())
         assert fake.file_name == os.path.join(tmp, "b.txt")
 
@@ -79,9 +76,9 @@ def test_renaming_a_directory_rewrites_nested_paths():
         nested_file = os.path.join(old_dir, "child.txt")
         open(nested_file, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_expanded = {old_dir}
-        fake.worktree_selected_entries = {nested_file}
-        fake.worktree_new_entry_dir = old_dir
+        fake.worktree.expanded = {old_dir}
+        fake.worktree.selected_entries = {nested_file}
+        fake.worktree.new_entry_dir = old_dir
         # A background (non-active) tab, so its own rewrite path
         # (through fake.tabs[i]["file_name"], not fake.file_name) gets
         # exercised too - the active tab's is covered by
@@ -91,13 +88,13 @@ def test_renaming_a_directory_rewrites_nested_paths():
         ]
         fake.active_tab = 0
         fake._next_name = "renamed"
-        fake.worktree_cursor = 1  # entries[0] is the root; 1 is "sub"
+        fake.worktree.cursor = 1  # entries[0] is the root; 1 is "sub"
         fake._worktree_rename(fake._worktree_entries())
         new_dir = os.path.join(tmp, "renamed")
         new_nested = os.path.join(new_dir, "child.txt")
-        assert fake.worktree_expanded == {new_dir}
-        assert fake.worktree_selected_entries == {new_nested}
-        assert fake.worktree_new_entry_dir == new_dir
+        assert fake.worktree.expanded == {new_dir}
+        assert fake.worktree.selected_entries == {new_nested}
+        assert fake.worktree.new_entry_dir == new_dir
         assert fake.tabs[1]["file_name"] == new_nested
         assert os.path.isfile(new_nested)
 
@@ -108,7 +105,7 @@ def test_renaming_to_the_same_name_is_a_no_op():
         open(path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         fake._next_name = "a.txt"
-        fake.worktree_cursor = 1
+        fake.worktree.cursor = 1
         fake._worktree_rename(fake._worktree_entries())
         assert fake.status == "Cancelled"
         assert os.path.exists(path)
@@ -120,7 +117,7 @@ def test_cancelling_the_dialog_is_a_no_op():
         open(path, "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
         fake._next_name = ""
-        fake.worktree_cursor = 1
+        fake.worktree.cursor = 1
         fake._worktree_rename(fake._worktree_entries())
         assert fake.status == "Cancelled"
         assert os.path.exists(path)
@@ -153,7 +150,7 @@ def test_rename_by_index_targets_the_hovered_row_not_the_cursor():
         open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8").close()
         open(os.path.join(tmp, "b.txt"), "w", encoding="utf-8").close()
         fake = FakePanel(tmp)
-        fake.worktree_cursor = 0  # a.txt
+        fake.worktree.cursor = 0  # a.txt
         fake._next_name = "renamed_b.txt"
         fake._worktree_rename_by_index(fake._row_for("b.txt"))
         assert os.path.exists(os.path.join(tmp, "a.txt"))
