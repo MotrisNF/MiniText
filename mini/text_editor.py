@@ -90,6 +90,7 @@ class TextEditor(
         self._suggestion_dismissed_at = None
         self._suggestion_caches = SuggestionCaches()
         self._elastic_width_cache = {}
+        self._indent_guide_depth_cache = {}
         self._worktree_entries_cache = None
         self._mouse_state = MouseState()
         self._name_dialog = None

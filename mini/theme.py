@@ -84,6 +84,9 @@ _COLOR_GROUPS = (
             "gutter dot for a too-long line, or an unresolved "
             "import/#include"
         ),
+        "INDENT_GUIDE_COLOR": (
+            "vertical indentation guide lines (SHOW_INDENT_GUIDES)"
+        ),
     }),
     ("Selection and matching", {
         "BRACKET_MATCH_COLOR": "background behind a matching bracket/quote",
@@ -140,6 +143,7 @@ _COLOR_KINDS = {
     "DECLARATION_COLOR": "fg",
     "COMMENT_COLOR": "fg",
     "WORD_MATCH_COLOR": "bg",
+    "INDENT_GUIDE_COLOR": "fg",
 }
 
 DEFAULT_THEMES = {
@@ -152,7 +156,7 @@ DEFAULT_THEMES = {
         "RULER_COLOR": 238,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
         "DECLARATION_COLOR": 203, "COMMENT_COLOR": 108,
-        "WORD_MATCH_COLOR": 24,
+        "WORD_MATCH_COLOR": 24, "INDENT_GUIDE_COLOR": 238,
     },
     "dark": {
         "BACKGROUND_COLOR": 233, "TEXT_COLOR": 250, "LINE_NUMBER_COLOR": 240,
@@ -163,7 +167,7 @@ DEFAULT_THEMES = {
         "RULER_COLOR": 236,
         "LINE_LENGTH_ERROR_COLOR": 196, "STRING_COLOR": 117,
         "DECLARATION_COLOR": 203, "COMMENT_COLOR": 102,
-        "WORD_MATCH_COLOR": 23,
+        "WORD_MATCH_COLOR": 23, "INDENT_GUIDE_COLOR": 236,
     },
     "light": {
         "BACKGROUND_COLOR": 253, "TEXT_COLOR": 235, "LINE_NUMBER_COLOR": 246,
@@ -174,7 +178,7 @@ DEFAULT_THEMES = {
         "RULER_COLOR": 249,
         "LINE_LENGTH_ERROR_COLOR": 160, "STRING_COLOR": 25,
         "DECLARATION_COLOR": 160, "COMMENT_COLOR": 101,
-        "WORD_MATCH_COLOR": 152,
+        "WORD_MATCH_COLOR": 152, "INDENT_GUIDE_COLOR": 249,
     },
 }
 # flake8/pycodestyle's own default max-line-length, reused here so a
@@ -186,7 +190,7 @@ DEFAULT_SETTINGS = {
     "THEME": "base", "SHOW_NUMBER_LINE": True, "SHOW_LINE_INDICATOR": True,
     "MAX_COLS_ENABLED": True, "MAX_COLS": DEFAULT_MAX_COLS,
     "INDENT_WITH_TABS": DEFAULT_INDENT_WITH_TABS, "TAB_SIZE": DEFAULT_TAB_SIZE,
-    "MOUSE_ENABLED": True, "AUTOSAVE": False,
+    "MOUSE_ENABLED": True, "AUTOSAVE": False, "SHOW_INDENT_GUIDES": True,
 }
 # Keys a [filetype:.ext] section may override - same names and same
 # parsing as their top-level counterparts in DEFAULT_SETTINGS, just
@@ -248,7 +252,7 @@ def _resolve_settings(primary, backup):
     settings = dict(DEFAULT_SETTINGS)
     for key in (
         "SHOW_NUMBER_LINE", "SHOW_LINE_INDICATOR", "MAX_COLS_ENABLED",
-        "INDENT_WITH_TABS", "MOUSE_ENABLED", "AUTOSAVE",
+        "INDENT_WITH_TABS", "MOUSE_ENABLED", "AUTOSAVE", "SHOW_INDENT_GUIDES",
     ):
         for source in (primary, backup):
             if key in source:
@@ -341,6 +345,9 @@ def _default_rc_text():
         f"THEME={DEFAULT_SETTINGS['THEME']}",
         f"SHOW_NUMBER_LINE={DEFAULT_SETTINGS['SHOW_NUMBER_LINE']}",
         f"SHOW_LINE_INDICATOR={DEFAULT_SETTINGS['SHOW_LINE_INDICATOR']}",
+        "# SHOW_INDENT_GUIDES draws a vertical line at each",
+        "# indentation level.",
+        f"SHOW_INDENT_GUIDES={DEFAULT_SETTINGS['SHOW_INDENT_GUIDES']}",
         "# MAX_COLS draws a ruler at that column (flake8's own default,",
         "# 79, by default here too) and flags lines that cross it;",
         "# MAX_COLS_ENABLED turns the ruler and the flagging off",
@@ -560,6 +567,7 @@ def _apply_loaded_state():
     global _filetype_overrides
     global SHOW_NUMBER_LINE, SHOW_LINE_INDICATOR, MAX_COLS_ENABLED
     global MAX_COLS, INDENT_WITH_TABS, TAB_SIZE, MOUSE_ENABLED, AUTOSAVE
+    global SHOW_INDENT_GUIDES, INDENT_GUIDE_COLOR
     global BACKGROUND_COLOR, TEXT_COLOR, BASE_STYLE, COLOR_RESET
     global LINE_NUMBER_COLOR, CURRENT_LINE_INDICATOR_COLOR
     global BRACKET_MATCH_START, BRACKET_MATCH_END
@@ -580,6 +588,7 @@ def _apply_loaded_state():
     TAB_SIZE = settings["TAB_SIZE"]
     MOUSE_ENABLED = settings["MOUSE_ENABLED"]
     AUTOSAVE = settings["AUTOSAVE"]
+    SHOW_INDENT_GUIDES = settings["SHOW_INDENT_GUIDES"]
 
     BACKGROUND_COLOR = _ansi("BACKGROUND_COLOR", colors["BACKGROUND_COLOR"])
     TEXT_COLOR = _ansi("TEXT_COLOR", colors["TEXT_COLOR"])
@@ -621,6 +630,9 @@ def _apply_loaded_state():
     COMMENT_COLOR = _ansi("COMMENT_COLOR", colors["COMMENT_COLOR"])
     WORD_MATCH_START = _ansi("WORD_MATCH_COLOR", colors["WORD_MATCH_COLOR"])
     WORD_MATCH_END = BACKGROUND_COLOR
+    INDENT_GUIDE_COLOR = _ansi(
+        "INDENT_GUIDE_COLOR", colors["INDENT_GUIDE_COLOR"]
+    )
 
 
 SELECTION_START = "\x1b[7m"

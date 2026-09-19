@@ -321,6 +321,127 @@ class RenderMixin:
         )
         return head, tail
 
+    def _indent_guide_depth(self, line_index):
+        """How many indentation-guide levels `self.lines[line_index]`
+        draws at its own start - cached per render (see `_render`'s
+        own reasoning for `_elastic_width_cache`). 0 for a line with
+        no indentation, or one whose entire leading region actually
+        falls inside a multi-line comment/docstring carried over from
+        an earlier line (see `_comment_state_for`) - whitespace that
+        merely *looks* like indentation there is really string/
+        comment content, not real code structure.
+
+        A blank line (nothing but whitespace, or nothing at all)
+        borrows the next non-blank line's own depth - the same "still
+        visually part of this block" a blank line inside one
+        typically gets - falling back to 0 once nothing non-blank is
+        left (trailing blank lines at the end of the file). Every
+        blank line in a run shares one answer, found and cached
+        together the first time any one of them is asked for, so a
+        long run of them is only ever scanned once per render."""
+        cache = self._indent_guide_depth_cache
+        if line_index in cache:
+            return cache[line_index]
+        line = self.lines[line_index]
+        if not line.strip():
+            next_index = line_index + 1
+            while (
+                next_index < len(self.lines)
+                and not self.lines[next_index].strip()
+            ):
+                next_index += 1
+            depth = (
+                self._indent_guide_depth(next_index)
+                if next_index < len(self.lines) else 0
+            )
+            for index in range(line_index, next_index):
+                cache[index] = depth
+            return depth
+        leading = len(line) - len(line.lstrip(" \t"))
+        if leading == 0:
+            cache[line_index] = 0
+            return 0
+        entry_state, _, _ = self._comment_state_for(line_index)
+        if entry_state is not None:
+            cache[line_index] = 0
+            return 0
+        tab_size = theme.settings_for(self.file_name)["TAB_SIZE"]
+        leading_display = len(
+            self._display_text(line[:leading], line_index, 0)
+        )
+        depth = leading_display // tab_size
+        cache[line_index] = depth
+        return depth
+
+    def _colored_indent_guide(self, tab_size, width):
+        """`width` display columns of indent-guide styling: a "│" at
+        every `tab_size`-th column, plain spaces everywhere else -
+        `width` need not itself be a multiple of `tab_size` (a piece
+        narrower than one full level still gets however much of it
+        actually fits, rather than either all-or-nothing)."""
+        characters = (
+            "│" if column % tab_size == 0 else " "
+            for column in range(width)
+        )
+        return (
+            f"{theme.INDENT_GUIDE_COLOR}{''.join(characters)}"
+            f"{theme.COLOR_RESET}"
+        )
+
+    def _raw_length_for_display_width(self, line_index, text, max_width):
+        """How many of `text`'s own leading characters (raw, matching
+        `self.lines[line_index]`'s own first `len(text)` characters)
+        fit within `max_width` display columns - safe to call only on
+        a purely-whitespace prefix, where `_character_display_width`
+        is always well-defined (leading indentation is never subject
+        to elastic-tabstop cell widths - see its own docstring)."""
+        consumed = 0
+        for offset in range(len(text)):
+            width = self._character_display_width(line_index, offset)
+            if consumed + width > max_width:
+                return offset
+            consumed += width
+        return len(text)
+
+    def _prefix_with_indent_guides(
+        self, raw_text, line_index, display_text, apply_highlight,
+        lookahead,
+    ):
+        """None if this piece gets no indent-guide treatment (guides
+        off, no indentation here, or nothing left in `raw_text` to
+        show one in) - only ever called for a piece starting at the
+        true beginning of a line (`absolute_start == 0`, see
+        `_apply_highlight`). Otherwise the fully rendered result: a
+        blank line's own borrowed guide depth (see
+        `_indent_guide_depth`) can reach further than any real
+        character it actually has, so the guide portion is generated
+        fresh instead of recoloring existing ones - real content past
+        it, if this piece has any, still goes through the normal
+        highlighting path with its own correctly shifted position."""
+        if not theme.SHOW_INDENT_GUIDES:
+            return None
+        depth = self._indent_guide_depth(line_index)
+        if depth <= 0:
+            return None
+        tab_size = theme.settings_for(self.file_name)["TAB_SIZE"]
+        guide_display_width = depth * tab_size
+        if not self.lines[line_index].strip():
+            # Blank (or borrowed-depth) line - nothing real to render
+            # past the guides themselves.
+            return self._colored_indent_guide(tab_size, guide_display_width)
+        if len(display_text) <= guide_display_width:
+            return self._colored_indent_guide(tab_size, len(display_text))
+        raw_consumed = self._raw_length_for_display_width(
+            line_index, raw_text, guide_display_width
+        )
+        guide = self._colored_indent_guide(tab_size, guide_display_width)
+        if raw_consumed >= len(raw_text):
+            return guide
+        return guide + self._apply_highlight(
+            raw_text[raw_consumed:], line_index, raw_consumed,
+            apply_highlight, lookahead,
+        )
+
     def _apply_highlight(
         self, raw_text, line_index, absolute_start, apply_highlight,
         lookahead="",
@@ -331,10 +452,20 @@ class RenderMixin:
         its own leading/trailing *display* text is already known to be
         inside a multi-line construct (see `_carryover_for`) so the
         highlighter can color that much of it as a comment outright
-        instead of tokenizing it normally."""
+        instead of tokenizing it normally. A piece starting at the
+        true beginning of a line gets first refusal from
+        `_prefix_with_indent_guides` instead - indentation itself is
+        never a token any `apply_highlight` here knows how to color."""
         display_text = self._display_text(
             raw_text, line_index, absolute_start
         )
+        if absolute_start == 0:
+            guided = self._prefix_with_indent_guides(
+                raw_text, line_index, display_text, apply_highlight,
+                lookahead,
+            )
+            if guided is not None:
+                return guided
         raw_head, raw_tail = self._carryover_for(
             line_index, absolute_start, len(raw_text)
         )
@@ -687,6 +818,12 @@ class RenderMixin:
         # whole thing away and let it be rebuilt, lazily, as this
         # render's own lookups need it.
         self._elastic_width_cache = {}
+        # Indentation-guide depths (see `_indent_guide_depth`) are just
+        # as render-scoped: an edit anywhere can change how far a
+        # blank line's own borrowed depth reaches, so this is thrown
+        # away and lazily rebuilt the same way, rather than tracked
+        # incrementally.
+        self._indent_guide_depth_cache = {}
         file_settings = theme.settings_for(self.file_name)
         number_width = len(str(len(self.lines)))
         tab_bar = self._tab_bar_line()
