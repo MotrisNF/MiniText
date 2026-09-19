@@ -210,6 +210,15 @@ never know existed.
 | `Ctrl+Y`                  | Redo                                    |
 | `Tab` / `Shift+Tab`       | Switch to the next / previous tab       |
 
+Typing a search highlights every occurrence on screen live, before
+you even press Enter - the same highlight double-clicking a word (or
+any other whole-word selection - a mouse drag, `Ctrl`+arrow) already
+shows for its other occurrences. Either way it sticks around - through
+scrolling with the mouse wheel included - until `Esc`, a click
+elsewhere (mouse mode), or a new selection/search replaces it.
+`:s/old/new/` (see [Commands](#commands)) reuses the exact same
+substring match to replace every occurrence in the file at once.
+
 ### Move mode
 
 `m` toggles Move mode - there's no way for a terminal program to
@@ -261,6 +270,7 @@ Type `:` from Visual mode, then Enter.
 | `:cl <n>`     | Copy line `n`                                        |
 | `:v`          | Paste at the cursor                                  |
 | `:vl <n>`     | Paste as a new line before line `n`                  |
+| `:s/old/new/` | Replace every occurrence of `old` with `new` in the whole file (confirms first) |
 | `:u`          | Undo                                                 |
 | `:r`          | Redo                                                 |
 | `:tree`       | Toggle the worktree panel's visibility                |
@@ -322,7 +332,10 @@ Mini's own regex/`ast` heuristics, so it also covers a chained call
 dependent case the heuristics above give up on outright. Whenever jedi
 can't answer (not installed, or it genuinely finds nothing), the
 heuristics above run exactly as if jedi didn't exist, so nothing here
-is a hard requirement.
+is a hard requirement. jedi itself runs on a background thread rather
+than blocking a keystroke on it - opening a `.py` file also warms it
+up right away, in the background, so its first real use in a session
+isn't the one that pays for it.
 
 After `from module import `, it offers that module's actual members
 (`from sys import arg` suggests `argv`) - found by really importing
@@ -636,14 +649,22 @@ off. Once enabled:
 One real tradeoff to know about: enabling this makes the terminal
 hand click-and-drag over to Mini instead of doing its own native text
 selection with it - so the terminal's usual copy shortcut no longer
-copies a drag made inside Mini this way, since that selection only
-ever exists inside Mini itself (the same way a keyboard-made selection
-already does - see `:c`, which copies to Mini's own internal
-clipboard, not the system one, either way). Most terminals let you
-hold `Shift` while dragging to bypass Mini's mouse capture and get
-their own native selection (and its copy shortcut) back on demand -
-that's a terminal feature, not something Mini controls, but it works
-in the great majority of them.
+copies a drag made inside Mini this way on its own, since that
+selection only ever exists inside Mini itself (the same way a
+keyboard-made selection already does) until `:c` actually copies it.
+`:c` copies to Mini's own internal clipboard *and*, best-effort, to
+the terminal's real system clipboard via OSC 52 (works over SSH too,
+on any terminal that supports it) - so it reaches other applications
+too, not just `:v` back inside Mini. Pasting the other way, from
+outside Mini, always goes through the terminal's own native paste
+(`Ctrl+Shift+V`, a middle-click, `Cmd+V`, ...) instead of `:v` - Mini
+reads it as one piece via bracketed paste, so a multi-line paste of
+already-indented text is inserted exactly as it was, not run back
+through auto-indent one line at a time. Most terminals let you hold
+`Shift` while dragging to bypass Mini's mouse capture and get their
+own native selection (and its copy shortcut) back on demand - that's
+a terminal feature, not something Mini controls, but it works in the
+great majority of them.
 
 ## Tabs
 
@@ -910,16 +931,22 @@ Mini is intentionally small. Some notable limitations:
   `Class` imported directly via `from module import Class`). jedi
   lifts all of these restrictions when it's available and can answer;
   Mini only falls back to this narrower heuristic when it can't.
-- jedi runs in-process, synchronously, on Mini's own single-threaded
-  key-reading loop - there's no timeout on it the way there is on the
-  isolated-subprocess checks elsewhere. Its first use for a given
-  import or class in a session can be noticeably slower than a plain
-  buffer-word match (parsing/caching a large module or a cold
-  environment probe); Mini itself doesn't cap this.
 - Undo/redo is granular: each keystroke that changes the text is its
   own undo step.
-- Search is a plain, case-insensitive substring match; there is no
-  regular-expression support.
+- Search (and `:s/old/new/`, which reuses the same matching) is a
+  plain, case-insensitive substring match; there is no regular-
+  expression support, and a `/` inside `old` or `new` isn't
+  supported either (that's the delimiter), with no way to pick a
+  different one the way `sed` lets you.
+- Search/replace, and highlighting a word's other occurrences, only
+  ever look at the buffer currently open - there's no project-wide
+  search across every file in the worktree.
+- `:c`/`c` copying to the system clipboard (see [Mouse](#mouse)) is
+  best-effort over OSC 52: there's no reliable way to tell in advance
+  whether the terminal actually supports it, and some terminals
+  silently ignore (or truncate) a copy past a size limit of their
+  own - Mini's own internal clipboard (`:v`/`v`) is never affected
+  either way, only whether the system one also got it.
 - Module-name completion after `import`/`from` covers top-level
   standard library modules plus `.py` files and packages in the
   current file's own directory - not submodules, third-party

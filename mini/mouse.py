@@ -289,6 +289,7 @@ class MouseMixin:
         self._release_worktree_focus()
         self.command = None
         self.search_query = None
+        self._highlight_query = None
         if self.mode != "insert":
             self.mode = "visual"
         self._maybe_autosave()

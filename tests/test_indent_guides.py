@@ -124,12 +124,12 @@ def test_toggle_off_shows_no_guides_at_all():
     assert all("│" not in text for text in plain.values())
 
 
-def test_guides_are_suppressed_inside_a_multiline_docstring():
-    """Whitespace that merely *looks* like indentation inside a
-    docstring's own content isn't real code structure - the opening
-    and closing lines (their own entry_state is None - nothing is
-    carried *into* them) still get guides from their real leading
-    indentation, same as any other line."""
+def test_guides_keep_running_through_a_multiline_docstring():
+    """Regression: guides used to stop for a multi-line docstring's
+    own content (treated as "not real indentation") - most editors
+    keep drawing them straight through one, and the gap looked like a
+    rendering bug, not a feature, so every line here gets a guide from
+    its own leading whitespace same as any other line would."""
     editor = _editor_for(
         'def f():\n'
         '    """\n'
@@ -138,9 +138,9 @@ def test_guides_are_suppressed_inside_a_multiline_docstring():
         '    return 1\n'
     )
     plain, _ = _render_rows(editor)
-    assert "│" in plain[3]  # the opening \"\"\" line - real indentation
-    assert "│" not in plain[4]  # inside the docstring - suppressed
-    assert "│" not in plain[5]  # the closing \"\"\" line - suppressed
+    assert "│" in plain[3]  # the opening \"\"\" line
+    assert "│" in plain[4]  # inside the docstring
+    assert "│" in plain[5]  # the closing \"\"\" line
     assert "│" in plain[6]  # back to real code
 
 
@@ -170,7 +170,7 @@ TESTS = [
     test_trailing_blank_lines_at_eof_show_no_guide,
     test_guides_are_colored_and_dont_disturb_syntax_highlighting,
     test_toggle_off_shows_no_guides_at_all,
-    test_guides_are_suppressed_inside_a_multiline_docstring,
+    test_guides_keep_running_through_a_multiline_docstring,
     test_guides_work_with_tab_indentation,
     test_uneven_indentation_gets_no_partial_guide,
 ]

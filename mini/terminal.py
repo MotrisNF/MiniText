@@ -3,6 +3,7 @@ raw mode, reading keys (including multi-byte escape sequences for
 arrows and friends), and the resize/child-output wakeup plumbing the
 main loop's `select()` waits on."""
 
+import base64
 import os
 import select
 import signal
@@ -65,6 +66,16 @@ def _disable_resize_wakeup(read_fd, write_fd):
 _MOUSE_ENABLE = "\x1b[?1003h\x1b[?1006h"
 _MOUSE_DISABLE = "\x1b[?1006l\x1b[?1003l"
 
+# Bracketed paste (2004) wraps a real paste in "\x1b[200~"..."\x1b[201~"
+# instead of handing it over as a plain stream of keys - without it, a
+# multi-line paste of already-indented text gets each of its own lines
+# run back through Mini's normal Enter handling (auto-indent included),
+# compounding the indentation it already had on every single line.
+# Always on, regardless of MOUSE_ENABLED - this is a correctness fix,
+# not a UX tradeoff like mouse tracking is.
+_BRACKETED_PASTE_ENABLE = "\x1b[?2004h"
+_BRACKETED_PASTE_DISABLE = "\x1b[?2004l"
+
 
 @contextmanager
 def raw_terminal():
@@ -73,6 +84,7 @@ def raw_terminal():
     try:
         tty.setraw(file_descriptor)
         sys.stdout.write(f"\x1b[?1049h{theme.BASE_STYLE}\x1b[2J\x1b[H")
+        sys.stdout.write(_BRACKETED_PASTE_ENABLE)
         if theme.MOUSE_ENABLED:
             sys.stdout.write(_MOUSE_ENABLE)
         sys.stdout.flush()
@@ -80,6 +92,7 @@ def raw_terminal():
     finally:
         if theme.MOUSE_ENABLED:
             sys.stdout.write(_MOUSE_DISABLE)
+        sys.stdout.write(_BRACKETED_PASTE_DISABLE)
         termios.tcsetattr(
             file_descriptor, termios.TCSADRAIN, previous_settings
         )
@@ -222,6 +235,8 @@ def read_key(timeout=None):
         return "CTRL-LEFT" if ctrl else "LEFT"
     if final == "~" and modifier_parts[0] == "3":
         return "DELETE"
+    if final == "~" and modifier_parts[0] == "200":
+        return "PASTE:" + _read_bracketed_paste(stdin_fd)
     if final == "Z":
         return "SHIFT-TAB"
     return ESC
@@ -249,6 +264,34 @@ def _read_csi_final(stdin_fd):
             params += char
         else:
             return char, params
+
+
+def _read_bracketed_paste(stdin_fd):
+    """Everything up to (and including) the "\\x1b[201~" end marker a
+    bracketed paste is wrapped in (see `read_key`'s own "\\x1b[200~"
+    detection), decoded as UTF-8, with that end marker itself stripped
+    back off - the pasted text, verbatim, newlines and all, handed to
+    a caller as one piece instead of read_key() being called again for
+    each byte of it. A stalled/broken paste (the end marker never
+    arrives) gives up after a full second of nothing new arriving,
+    returning whatever was actually read so far rather than hanging."""
+    end_marker = b"\x1b[201~"
+    raw = b""
+    while not raw.endswith(end_marker):
+        if _pending_byte is None:
+            try:
+                ready, _, _ = select.select([stdin_fd], [], [], 1.0)
+            except InterruptedError:
+                continue
+            if not ready:
+                break
+        byte = _read_stdin_byte(stdin_fd)
+        if not byte:
+            break
+        raw += byte
+    if raw.endswith(end_marker):
+        raw = raw[:-len(end_marker)]
+    return raw.decode("utf-8", errors="ignore")
 
 
 def _read_mouse_event(stdin_fd):
@@ -325,3 +368,22 @@ def set_suggestion_ready_fd(fd):
     idle - without terminal.py needing to import that module back."""
     global _suggestion_ready_fd
     _suggestion_ready_fd = fd
+
+
+def copy_to_system_clipboard(text):
+    """Best-effort: also copies `text` to the terminal's own system
+    clipboard via OSC 52 (works over SSH too, on any terminal that
+    supports it) - called wherever Mini's own `:c`/`c` already copies
+    something to its *internal* one, so the same text becomes
+    available to paste into other applications too, not just back
+    into Mini itself via `:v`/`v`. There's no reliable way to detect
+    in advance whether the terminal actually understands this; a
+    write that lands on one that doesn't is simply never acted on,
+    same as any other escape sequence a terminal doesn't recognize -
+    it never corrupts the screen or raises here."""
+    encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    try:
+        sys.stdout.write(f"\x1b]52;c;{encoded}\x07")
+        sys.stdout.flush()
+    except OSError:
+        pass

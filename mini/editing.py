@@ -252,6 +252,28 @@ class BufferEditMixin:
             search_from = found + 1
         return columns
 
+    def _substring_match_columns(self, line_index, query):
+        """Every (start, end) raw-column span on `self.lines
+        [line_index]` where `query` occurs, plain substring, case-
+        insensitive - the same matching rule `_find_next`'s own search
+        already uses, unlike `_word_match_columns`'s whole-word,
+        case-sensitive one: a search for "urn" is meant to find it
+        inside "return" or "turn" too, not just as its own identifier."""
+        text = self.lines[line_index].lower()
+        needle = query.lower()
+        if not needle:
+            return []
+        columns = []
+        search_from = 0
+        needle_length = len(needle)
+        while True:
+            found = text.find(needle, search_from)
+            if found == -1:
+                break
+            columns.append((found, found + needle_length))
+            search_from = found + 1
+        return columns
+
     def _delete_selection(self):
         bounds = self._selection_bounds()
         if bounds is None:

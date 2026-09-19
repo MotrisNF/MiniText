@@ -325,11 +325,12 @@ class RenderMixin:
         """How many indentation-guide levels `self.lines[line_index]`
         draws at its own start - cached per render (see `_render`'s
         own reasoning for `_elastic_width_cache`). 0 for a line with
-        no indentation, or one whose entire leading region actually
-        falls inside a multi-line comment/docstring carried over from
-        an earlier line (see `_comment_state_for`) - whitespace that
-        merely *looks* like indentation there is really string/
-        comment content, not real code structure.
+        no indentation; otherwise always from its own leading
+        whitespace, whether or not that line happens to be inside a
+        multi-line comment/docstring carried over from an earlier one
+        - most editors keep drawing guides straight through one, and
+        stopping partway through a block just because it's commented
+        out looked like a gap/bug, not a feature.
 
         A blank line (nothing but whitespace, or nothing at all)
         borrows the next non-blank line's own depth - the same "still
@@ -359,10 +360,6 @@ class RenderMixin:
             return depth
         leading = len(line) - len(line.lstrip(" \t"))
         if leading == 0:
-            cache[line_index] = 0
-            return 0
-        entry_state, _, _ = self._comment_state_for(line_index)
-        if entry_state is not None:
             cache[line_index] = 0
             return 0
         tab_size = theme.settings_for(self.file_name)["TAB_SIZE"]
@@ -807,6 +804,28 @@ class RenderMixin:
         else:
             self._help_scroll += step
 
+    def _refresh_highlight_query(self):
+        """Keeps `_highlight_query`/`_highlight_whole_word` (what the
+        row loop below highlights every other occurrence of) in sync
+        with whatever whole word the *current* selection happens to
+        span - any way it was made (double-click, a mouse drag, Ctrl+
+        arrow - `_current_selection_word` is blind to how), same as
+        this always worked. The difference is what happens once that
+        selection goes away: rather than the highlight disappearing
+        right along with it (the mouse wheel clearing a selection to
+        scroll being the one that actually prompted this - scrolling
+        to look for more matches used to erase them instead), it stays
+        exactly as it was until something else explicitly overwrites
+        or clears it (a new selection/search, Esc, or a click - see
+        `_handle_editing_key`/`_handle_search_mode_key`/`mouse.py`'s
+        own `_reset_focus_for_click`). Search typing (`/`) drives it
+        the same way from `_handle_search_mode_key` instead, live,
+        before Enter ever executes it."""
+        selection_word = self._current_selection_word()
+        if selection_word is not None:
+            self._highlight_query = selection_word
+            self._highlight_whole_word = True
+
     def _render(self):
         if self.help_mode:
             self._render_help()
@@ -886,7 +905,7 @@ class RenderMixin:
         )
         self._ensure_cursor_visible(editor_rows, content_width)
         selection_bounds = self._selection_bounds()
-        current_selection_word = self._current_selection_word()
+        self._refresh_highlight_query()
         self._refresh_suggestion_matches()
         suggestion = self._ghost_suggestion()
         bracket_match = self._matching_bracket_position()
@@ -1148,11 +1167,18 @@ class RenderMixin:
                     else None
                 )
                 word_match_ranges = None
-                if current_selection_word:
+                if self._highlight_query:
+                    match_columns = (
+                        self._word_match_columns(index, self._highlight_query)
+                        if self._highlight_whole_word
+                        else self._substring_match_columns(
+                            index, self._highlight_query
+                        )
+                    )
                     word_match_ranges = [
-                        (start, end) for start, end in
-                        self._word_match_columns(index, current_selection_word)
-                        if selection_range != (start, end)
+                        (start, end) for start, end in match_columns
+                        if selection_bounds is None
+                        or selection_range != (start, end)
                         or index != selection_bounds[0]
                     ]
                 displayed = self._render_wrapped_segment(

@@ -61,6 +61,16 @@ class TextEditor(
         self.count_locked = False
         self.search_query = None
         self.last_search = None
+        # What "highlight every other occurrence" (see rendering.py's
+        # `_refresh_highlight_query`) is currently showing - a whole
+        # word (from a selection spanning exactly one, however it was
+        # made) or a live/executed search query, substring-matched.
+        # Kept independent of the selection/search itself so it
+        # survives past the moment either one goes away (the mouse
+        # wheel clearing a selection to scroll, for one) instead of
+        # disappearing right along with it.
+        self._highlight_query = None
+        self._highlight_whole_word = False
         self.undo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
         self.redo_stack = deque(maxlen=UNDO_HISTORY_LIMIT)
         self.modified = False
@@ -142,6 +152,9 @@ class TextEditor(
                         continue
                     if key == "SUGGESTION_READY":
                         continue
+                    if key.startswith("PASTE:"):
+                        self._handle_paste_event(key[len("PASTE:"):])
+                        continue
                     if key == "MOUSE_IGNORE":
                         continue
                     if key.startswith("MOUSE_"):
@@ -181,6 +194,24 @@ class TextEditor(
             python_introspection.set_suggestion_wakeup_fd(None)
             os.close(suggestion_read_fd)
             os.close(suggestion_write_fd)
+
+    def _handle_paste_event(self, text):
+        """A real (bracketed, see terminal.py's own detection) paste -
+        routed straight into the buffer/subprocess as one piece
+        instead of one keystroke at a time, so a multi-line paste of
+        already-indented text never gets each of its own lines run
+        back through `_new_line`'s auto-indent on top of what it
+        already had. Forwarded to the running process's own stdin
+        while the :run/:lint/:cmd panel is focused, matching how it
+        already receives ordinary typed input there; dropped silently
+        everywhere else that doesn't accept typed text at all (Help,
+        the worktree panel, Command/Search mode)."""
+        if self.run_panel.focused:
+            if self.run_panel.master_fd is not None:
+                os.write(self.run_panel.master_fd, text.encode("utf-8"))
+        elif self.mode == "insert":
+            self._delete_selection()
+            self._paste(text)
 
     def _handle_help_mode_key(self, key):
         if key == "q":
@@ -263,13 +294,20 @@ class TextEditor(
     def _handle_search_mode_key(self, key):
         if key in ("\r", "\n"):
             self._execute_search()
-        elif key in ("\x7f", "\b"):
+            return
+        if key in ("\x7f", "\b"):
             self.search_query = self.search_query[:-1]
         elif key == ESC:
             self.search_query = None
             self.mode = "visual"
+            self._highlight_query = None
+            return
         elif len(key) == 1 and key.isprintable():
             self.search_query += key
+        # Live preview: every occurrence highlights as it's typed, not
+        # only once Enter actually executes the search.
+        self._highlight_query = self.search_query or None
+        self._highlight_whole_word = False
 
     def _handle_move_mode_key(self, key):
         if key in ("j", "DOWN"):
@@ -314,6 +352,7 @@ class TextEditor(
             self.mode = "visual"
             self.command = None
             self.selection_anchor = None
+            self._highlight_query = None
             if was_insert:
                 self._maybe_autosave()
         elif self.mode == "visual" and key == ":":

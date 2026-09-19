@@ -317,6 +317,7 @@ class CommandMixin:
         else:
             self.clipboard = self.lines[self.line]
             self.status = f"Copied line {self.line + 1}"
+        terminal.copy_to_system_clipboard(self.clipboard)
 
     def _copy_line(self, argument):
         line_index = self._line_index_from_argument(argument)
@@ -324,6 +325,7 @@ class CommandMixin:
             return
         self.clipboard = self.lines[line_index]
         self.status = f"Copied line {argument}"
+        terminal.copy_to_system_clipboard(self.clipboard)
 
     def _paste_at_cursor(self):
         if self.clipboard is None:
@@ -379,6 +381,43 @@ class CommandMixin:
         self.last_search = query
         self._find_next(query, from_current=False)
 
+    def _execute_replace(self, rest):
+        """`:s/old/new/` - replaces every occurrence of `old` (plain
+        substring, case-insensitive - same matching `_find_next`'s own
+        search already uses, no regex) with `new` across the whole
+        buffer, confirmed first the same way a bulk delete/move
+        already is, and undoable as the one step it is. `new` empty is
+        a valid way to delete every occurrence of `old` outright;
+        `old` containing its own literal "/" isn't supported (the
+        exact same "no regex" simplicity this shares with search) -
+        neither case is distinguished from a plain typo in the
+        command, both just get the same usage message."""
+        parts = rest.split("/")
+        if len(parts) != 3 or parts[2] != "" or not parts[0]:
+            self.status = "Usage: :s/old/new/"
+            return
+        old, new = parts[0], parts[1]
+        total = sum(
+            len(self._substring_match_columns(index, old))
+            for index in range(len(self.lines))
+        )
+        if total == 0:
+            self.status = f"'{old}' not found"
+            return
+        if not self._confirm(
+            f"Replace {total} occurrence(s) of '{old}' with '{new}'? (y/n)"
+        ):
+            self.status = "Cancelled"
+            return
+        self._snapshot()
+        pattern = re.compile(re.escape(old), re.IGNORECASE)
+        for index, line in enumerate(self.lines):
+            self.lines[index] = pattern.sub(lambda match: new, line)
+        self.column = min(self.column, len(self.lines[self.line]))
+        self.selection_anchor = None
+        self._highlight_query = None
+        self.status = f"Replaced {total} occurrence(s)"
+
     def _execute_command(self):
         command = self.command
         self.command = None
@@ -391,6 +430,11 @@ class CommandMixin:
             # _parse_command's name/line-number pattern, so it has to
             # be pulled out before that runs.
             self._start_cmd(command[len("cmd"):].strip())
+            return
+        if command.startswith("s/"):
+            # Same reasoning as "cmd" above - "/" never matches
+            # _parse_command's plain name/line-number shape.
+            self._execute_replace(command[len("s/"):])
             return
         name, argument = self._parse_command(command)
         if name == "w" and argument is None:
