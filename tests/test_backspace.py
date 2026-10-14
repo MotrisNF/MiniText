@@ -5,7 +5,8 @@ from _harness import FakeBuffer
 
 
 def test_soft_tab_backspace_removes_whole_block():
-    buf = FakeBuffer(["        x"], line=0, column=8)  # 8 spaces, INDENT_WITH_TABS=False, TAB_SIZE=4
+    # 8 spaces, INDENT_WITH_TABS=False, TAB_SIZE=4
+    buf = FakeBuffer(["        x"], line=0, column=8)
     buf._backspace()
     assert buf.lines[0] == "    x", buf.lines[0]
     assert buf.column == 4, buf.column
@@ -35,7 +36,8 @@ def test_backspace_mid_line_alignment_spaces_unaffected():
 
 
 def test_backspace_unaligned_column_falls_back_to_one_space():
-    buf = FakeBuffer(["     x"], line=0, column=5)  # 5 spaces, not a multiple of 4
+    # 5 spaces, not a multiple of 4
+    buf = FakeBuffer(["     x"], line=0, column=5)
     buf._backspace()
     assert buf.lines[0] == "    x", buf.lines[0]
     assert buf.column == 4, buf.column

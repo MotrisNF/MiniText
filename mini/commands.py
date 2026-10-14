@@ -5,6 +5,7 @@ import os
 import re
 import sys
 
+import header42
 import terminal
 import theme
 
@@ -145,7 +146,19 @@ class CommandMixin:
             self._save_all_tabs()
             self.running = False
 
-    def _read_command_line(self):
+    def _ask_on_command_line(self, prompt):
+        """`_read_command_line` with the prompt already on screen, for
+        the callers that ask for free-form text rather than a file
+        name: `_read_command_line` only draws it alongside what's been
+        typed so far, so without this first render an empty answer
+        would be asked for by a command line showing nothing at all -
+        and a chain of questions (`:configuser`'s login, then campus)
+        would look like it had silently stopped between them."""
+        self.status = prompt
+        self._render()
+        return self._read_command_line(prompt)
+
+    def _read_command_line(self, prompt="File name: "):
         value = ""
         while True:
             key = terminal.read_key()
@@ -157,7 +170,7 @@ class CommandMixin:
                 return ""
             elif len(key) == 1 and key.isprintable():
                 value += key
-            self.status = f"File name: {value}"
+            self.status = f"{prompt}{value}"
             self._render()
 
     def _confirm(self, prompt, items=None):
@@ -498,6 +511,34 @@ class CommandMixin:
             self._open_config_file()
         elif name == "refresh" and argument is None:
             self._refresh_config()
+        elif name == "header" and argument is None:
+            if self.file_name is None:
+                self.status = "Open or create a file first"
+                return
+            header = header42.build_header(os.path.basename(self.file_name))
+            if header is None:
+                self.status = "User/campus not configured, use :configuser"
+                return
+            self._snapshot()
+            self.lines[0:0] = header
+            self.line += len(header)
+            self.status = "Inserted header"
+        elif name == "configuser" and argument is None:
+            user = self._ask_on_command_line("User name: ")
+            if not user:
+                self.status = "User name not saved"
+                return
+            campus = self._ask_on_command_line(
+                "Campus (example: madrid, paris, etc...): "
+            )
+            if not campus:
+                self.status = "Campus not saved"
+                return
+            header42.save_config(user, campus)
+            self.status = f"Saved user/campus: {user} @ {campus}"
+        elif name == "clearuser" and argument is None:
+            header42.clear_config()
+            self.status = "Cleared saved user/campus"
         else:
             self.status = f"Unknown command: :{command}"
 

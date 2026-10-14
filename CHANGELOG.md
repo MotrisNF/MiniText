@@ -3,6 +3,25 @@
 Notable changes to Mini, release by release. The version number here
 matches `VERSION` (what `mini --version` prints).
 
+## Unreleased
+
+- New `:header` inserts the 11-line comment block 42-school projects
+  expect at the top of every source file, as one undoable step, using
+  the buffer's own file name. The login and campus it needs are saved
+  once with `:configuser` (asked one after the other, an empty answer
+  to either cancelling) and live in `~/.mini42`, deliberately apart
+  from `~/.minirc` - an identity rather than a setting, and one worth
+  being able to drop on its own, which `:clearuser` does. `:header`
+  on an unnamed buffer, or without a saved login, says so and leaves
+  the buffer alone instead of inserting an incomplete header.
+  Known gaps, all listed under Limitations in the README: the
+  `Created:`/`Updated:` timestamps are fixed rather than real and
+  aren't refreshed on save, a second `:header` stacks another block
+  instead of updating the one already there, and a file name over 51
+  characters would push that row past the 80-column block (no 42
+  project it's meant for comes close, and logins are always exactly
+  8 characters).
+
 ## 1.11.5 - 2026-09-18
 
 - Fixed renaming a file/directory, or dragging one onto another in

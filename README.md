@@ -24,6 +24,7 @@ as a general-purpose editor for anything else.
 - [Autocompletion](#autocompletion)
 - [Syntax highlighting](#syntax-highlighting)
 - [Running a file, linting, and shell commands](#running-a-file-linting-and-shell-commands)
+- [42 header](#42-header)
 - [Worktree panel](#worktree-panel)
 - [Mouse](#mouse)
 - [Tabs](#tabs)
@@ -63,6 +64,8 @@ as a general-purpose editor for anything else.
 - **Three built-in themes** (`base`, `dark`, `light`), fully
   configurable through a plain-text `~/.minirc`, with an automatic
   backup that protects against invalid edits.
+- **A 42-school header** inserted with `:header`, from a login and
+  campus saved once - see [42 header](#42-header).
 - **Self-updating**: an installed Mini checks for new commits and can
   pull and reinstall itself in place - see [Updating](#updating).
 - Resize-aware rendering on the terminal's alternate screen buffer -
@@ -277,6 +280,9 @@ Type `:` from Visual mode, then Enter.
 | `:run`        | Run this file and show its output below the code (also `:terminal`) |
 | `:lint`       | Run flake8 + mypy on this file, output shown the same way |
 | `:cmd <text>` | Run `text` as a bash command, output shown the same way |
+| `:header`     | Insert a 42-school header at the top of the file (see [42 header](#42-header)) |
+| `:configuser` | Save the login and campus `:header` uses, asked one after the other |
+| `:clearuser`  | Forget the saved login and campus                    |
 | `:help`       | Show the in-editor help screen                       |
 
 A one-off status message (`Saved`, `Cancelled`, `Created <path>`,
@@ -500,6 +506,47 @@ Each `:cmd` is its own isolated process like `:run` is - nothing it
 does (`source some/venv/bin/activate` included) persists into a later
 `:run` or `:cmd`, since that process is already gone by the time the
 next one starts.
+
+## 42 header
+
+`:header` inserts the 11-line comment block 42-school projects are
+expected to carry at the top of every source file, at the very top of
+the current buffer, as one undoable step.
+
+It needs a login and a campus first, saved once with `:configuser`,
+which asks for them one after the other on the command line (an empty
+answer to either cancels without saving anything). They live in
+`~/.mini42` - a separate file from `~/.minirc`, since this is an
+identity rather than a setting, and one you may well want to remove
+without touching the rest of your configuration. `:clearuser` does
+exactly that, deleting the file.
+
+From a login of `jsanchez` and a campus of `madrid`, `:header` on a
+file named `main.c` produces:
+
+```c
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   main.c                                             :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: jsanchez <jsanchez@student.42madrid.com>   +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/10/03 12:54:32 by jsanchez          #+#    #+#             */
+/*   Updated: 2026/10/03 13:58:56 by jsanchez         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+```
+
+The campus is lowercased for the email address only, so `Madrid` and
+`madrid` both give `@student.42madrid.com` while the campus is kept
+as you typed it. The file name comes from the buffer's own name, so
+`:header` on a buffer that has never been named asks you to save or
+create a file first rather than inserting a header with no name in
+it; `:header` without a saved login reminds you to run `:configuser`.
+Neither case touches the buffer.
+
+See [Limitations](#limitations) for what this header does not yet do.
 
 ## Worktree panel
 
@@ -867,6 +914,7 @@ like that.
 | `tabs.py`          | Multi-tab buffer lifecycle: switching tabs, reading files from disk |
 | `worktree.py`      | The worktree file explorer panel: listing, expanding/collapsing, creating/deleting/renaming entries |
 | `run_panel.py`     | `:run`/`:lint`/`:cmd`'s shared pty-backed output panel |
+| `header42.py`      | `:header`/`:configuser`/`:clearuser`: building the 42-school header block and storing the login/campus in `~/.mini42` |
 | `autocomplete.py`  | Word/keyword/module/type-aware suggestions for `.py` files |
 | `c_autocomplete.py` | C/C++'s own comment-scanning and `#include` machinery for autocompletion |
 | `python_introspection.py` | The subprocess/jedi introspection engine behind Python's type-aware completion |
@@ -991,6 +1039,18 @@ Mini is intentionally small. Some notable limitations:
   interpreter, module, and names, for the rest of the session) - so
   `pip install`-ing a missing package in another terminal while Mini
   is open doesn't clear its `●` marker until Mini is restarted.
+- The 42 header (see [42 header](#42-header)) carries fixed
+  `Created:`/`Updated:` timestamps rather than real ones, and neither
+  is refreshed when the file is saved - unlike the editor plugins 42
+  itself distributes, which keep `Updated:` current on every save.
+- `:header` always inserts, so running it on a file that already has
+  a header stacks a second one on top instead of updating the one
+  already there. `:u` undoes it as a single step.
+- The header's file-name column is aligned for a name of up to 51
+  characters, which every 42 project it's meant for stays well
+  within; a longer one would push that row past the 80-column block
+  rather than being truncated to fit. The login column needs no such
+  caveat: 42 issues logins of exactly 8 characters.
 
 ## License
 

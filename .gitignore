@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .mypy_cache/
+
+# Throwaway files used to try the editor out by hand on a real C
+# buffer (prueba.c, prueba2.c, ...) - never part of Mini itself.
+prueba*.c
